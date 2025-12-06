@@ -2,16 +2,14 @@
 require('dotenv').config();
 const http = require('http');
 const app = require('./app');
-const prisma = require('./db/prismaClient'); // reuse instance
+const prisma = require('./db/prismaClient'); 
 const { Server } = require('socket.io');
-
 const PORT = Number(process.env.PORT) || 4000;
 const SHUTDOWN_TIMEOUT = Number(process.env.SHUTDOWN_TIMEOUT_MS); // ms
+const {initializeSocketServer} = require('./socket');
 
 const server = http.createServer(app);
-const io = new Server(server, { 
-  cors: { origin: process.env.CORS_ORIGIN } 
-});
+const io = initializeSocketServer(server);
 app.set('io', io);
 
 // track open connections so we can destroy them if hang during shutdown
@@ -20,11 +18,6 @@ server.on('connection', (socket) => {
   connections.add(socket);
   socket.on('close', () => connections.delete(socket));
 });
-
-// If you use socket.io, attach here (before listen is fine)
-// const { Server } = require('socket.io');
-// const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN || 'http://localhost:3000' } });
-// require('./sockets')(io);
 
 let isShuttingDown = false;
 
@@ -51,9 +44,6 @@ async function shutdown(signal) {
   } catch (err) {
     console.error('Error closing Socket.IO:', err);
   }
-
-  // close other resources (e.g. redis, queues)
-  // try { await redis.disconnect(); } catch(e) { console.error('Redis close error', e); }
 
   // disconnect prisma
   try {

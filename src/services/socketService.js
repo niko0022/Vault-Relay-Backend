@@ -1,6 +1,6 @@
 const prisma = require('../db/prismaClient'); 
 const { isBlocked } = require('./block.service'); 
-const MessageService = require('./message.service'); 
+const MessageService = require('./messageService');
 
 const ONLINE_KEY = 'online';
 
@@ -117,18 +117,13 @@ async function onDisconnect(io, socket, reason) {
   }
 }
 
-
 function registerHandlers(io, socket) {
-
   socket.on('send_message', async (payload, ack) => {
     try {
       const senderId = socket.user.id;
-      const { conversationId, content, contentType = 'TEXT', attachmentUrl, replyToId } = payload || {};
+      const { conversationId, content, contentType, attachmentUrl, replyToId } = payload;
 
-      if (!conversationId) throw new Error('conversationId required');
-      if (!content && !attachmentUrl) throw new Error('Content or attachment required');
-
-      const message = await MessageService.createMessage({
+      const result = await MessageService.createMessage({
         senderId,
         conversationId,
         content,
@@ -137,13 +132,26 @@ function registerHandlers(io, socket) {
         replyToId,
       });
 
-      socket.to(`conv:${conversationId}`).emit('message', { message });
+      io.to(`conv:${conversationId}`).emit('message', { 
+        message: result.message 
+      });
 
-      if (ack) ack({ success: true, message }); 
+      const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
+      
+      result.recipients.forEach(recipientId => {
+        io.to(`user:${recipientId}`).emit('conversation.updated', {
+          conversationId,
+          lastMessage: result.message,
+          unreadCount: unreadMap.get(recipientId),
+          updatedAt: new Date().toISOString()
+        });
+      });
+
+      if (ack) ack({ success: true, message: result.message });
 
     } catch (err) {
       console.error('send_message error', err);
-      if (ack) ack({ success: false, error: err.message || 'Send failed' });
+      if (ack) ack({ success: false, error: err.message });
     }
   });
 
@@ -188,14 +196,31 @@ function registerHandlers(io, socket) {
   socket.on('read_message', async (payload) => {
     try {
       const userId = socket.user.id;
-      const { messageId } = payload || {};
-      if (!messageId) return;
+      const { conversationId, messageId } = payload || {};
+      
+      if (!conversationId) return;
 
-      const receipt = await MessageService.markAsRead({ messageId, userId });
-      // notify other participants about read
-      const msg = await prisma.message.findUnique({ where: { id: messageId } });
-      if (msg && msg.conversationId) {
-        io.to(`conv:${msg.conversationId}`).emit('read_receipt', { messageId, userId, readAt: receipt.readAt });
+      // Use the Shared Service
+      const result = await MessageService.markAsRead({
+        userId,
+        conversationId,
+        lastReadMessageId: messageId
+      });
+
+      // Emit updates if changes happened
+      if (result.marked > 0) {
+         // Notify the user (update badge)
+         io.to(`user:${userId}`).emit('conversation.updated', {
+            conversationId,
+            unreadCount: result.newUnreadCount
+         });
+         
+         // Notify others (read receipts)
+         io.to(`conv:${conversationId}`).emit('read_receipt', {
+            conversationId,
+            userId,
+            count: result.marked
+         });
       }
     } catch (err) {
       console.error('read_message error', err);

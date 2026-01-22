@@ -11,11 +11,9 @@ exports.getMessages = async (req, res, next) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const cursorRaw = req.query.cursor;
 
-    // check conversation exists
     const conv = await prisma.conversation.findUnique({ where: { id: convId } });
     if (!conv) return res.status(404).json({ message: 'Conversation not found' });
 
-    // verify user is participant: either participantA/B or Participant table entry
     const isParticipant =
       (conv.participantAId && conv.participantAId === userId) ||
       (conv.participantBId && conv.participantBId === userId) ||
@@ -23,30 +21,25 @@ exports.getMessages = async (req, res, next) => {
 
     if (!isParticipant) return res.status(403).json({ message: 'Forbidden' });
 
-    // parse cursor param (supports base64url opaque token or raw id)
-    const parsed = parseCursorParam(cursorRaw); // may be {id} or {id, createdAt}
+    const parsed = parseCursorParam(cursorRaw); 
     let whereCursor = undefined;
 
     if (parsed && parsed.createdAt) {
-      // full cursor supplied
       whereCursor = olderThanCursorWhere(parsed);
     } else if (parsed && parsed.id) {
-      // raw id fallback — need createdAt for keyset predicate
       const cursorMsg = await prisma.message.findUnique({ where: { id: parsed.id }, select: { id: true, createdAt: true } });
       if (cursorMsg) {
         whereCursor = olderThanCursorWhere({ id: cursorMsg.id, createdAt: cursorMsg.createdAt });
       }
     }
 
-    // Base where: conversationId
     const baseWhere = { conversationId: convId };
     const where = whereCursor ? { AND: [baseWhere, whereCursor] } : baseWhere;
 
-    // fetch newest first (desc) then reverse to oldest->newest for client
     const messages = await prisma.message.findMany({
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1, // +1 to detect hasNext
+      take: limit + 1, 
       select: {
         id: true,
         content: true,
@@ -67,7 +60,6 @@ exports.getMessages = async (req, res, next) => {
       ? makeCursorToken({ id: messages[limit - 1].id, createdAt: messages[limit - 1].createdAt })
       : null;
 
-    // return messages with explicit hasNext flag
     return res.json({ messages: page, nextCursor, hasNext });
   } catch (err) {
     next(err);
@@ -155,6 +147,71 @@ exports.markRead = async (req, res, next) => {
     if (err.message.includes('Invalid lastReadMessageId')) {
       return res.status(400).json({ message: err.message });
     }
+    next(err);
+  }
+};
+
+exports.editMessage = async (req, res, next) => {
+  try {
+    const {messageId} = req.params;
+    const userId = req.user.id;
+    const {content} = req.body;
+
+    if (!content || content.trim() === ''){
+      return res.status(400).json({message: 'Content is required to edit a message'})
+    }
+
+    const message = await prisma.message.findUnique({where: {id: messageId}});
+
+    if (!message) {
+      return res.status(404).json({message: 'Message not found'});
+    }
+
+    if (message.senderId !== userId){
+      return res.status(403).json({message: 'Forbidden: You can only edit your own messsages'})
+    }
+
+    const updatedMessage = await prisma.message.update({
+      where: {id: messageId},
+      data: {
+        content: content,
+        editedAt: new Date()
+      },
+      include: {
+        sender: {
+          select: {id: true, username: true, displayName: true, avatarUrl: true}
+        }
+      }
+    });
+
+    return res.status(200).json(updatedMessage);
+      
+  }
+  catch (err) {
+    next(err);
+  }
+};
+
+exports.deleteMessage = async (req, res, next) => {
+  try {
+    const {messageId} = req.params;
+    const userId = req.user.id;
+
+    const message = await prisma.message.findUnique({where: {id: messageId}});
+
+    if (!message) {
+      return res.status(404).json({message: 'Message not found'});
+    }
+
+    if (message.senderId !== userId){
+      return res.status(403).json({message: 'Forbidden: You can only delete your own messages'})
+    }
+
+    await prisma.message.delete({where: {id: messageId}});
+
+    return res.status(200).json({message: 'Message deleted successfully', id: messageId});
+  }
+  catch (err) {
     next(err);
   }
 };

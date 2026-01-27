@@ -6,9 +6,8 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const prisma = require('./db/prismaClient');
 const {initializePassport} = require('./middleware/passport');
-const passport = require('passport');
+const passport = initializePassport(require('passport'));
 const app = express();
-passport = initializePassport(passport);
 
 // Basic middleware
 app.use(helmet());

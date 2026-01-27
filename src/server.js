@@ -1,13 +1,10 @@
-// src/server.js
 require('dotenv').config();
 const http = require('http');
 const app = require('./app');
 const prisma = require('./db/prismaClient'); 
-const { Server } = require('socket.io');
 const PORT = Number(process.env.PORT) || 4000;
 const SHUTDOWN_TIMEOUT = Number(process.env.SHUTDOWN_TIMEOUT_MS); // ms
 const {initializeSocketServer} = require('./socket');
-
 const server = http.createServer(app);
 const io = initializeSocketServer(server);
 app.set('io', io);

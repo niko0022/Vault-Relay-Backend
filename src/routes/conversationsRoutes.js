@@ -1,10 +1,8 @@
 const express = require('express');
 const passport = require('passport');
-const { body, query } = require('express-validator');
+const { body, query, param } = require('express-validator');
 const groupController = require('../controllers/groupsController');
 const convController = require('../controllers/conversationsController');
-const { param } = require('./conversationsRoutes');
-const { Param } = require('@prisma/client/runtime/library');
 
 const router = express.Router();
 const auth = passport.authenticate('jwt', { session: false });
@@ -37,7 +35,7 @@ router.post(
     body('participantIds.*').isUUID().withMessage('each participantId must be a valid UUID'),
     body('avatarUrl').optional().isString().isURL().withMessage('avatarUrl must be a valid URL')
   ],
-  groupController.createGroupConversation
+  groupController.createGroup
 );
 
 router.post(
@@ -67,7 +65,14 @@ router.get(
     param('id').exists().isUUID().withMessage('converstaion id must be a valid UUID'),
   ],
   groupController.listParticipants
-)
+);
+
+router.delete('/:id', auth, 
+  [
+   param('id').isUUID().withMessage('converstaion id must be a valid UUID'),
+  ],
+  convController.deleteConversation
+);
 
 
 module.exports = router;

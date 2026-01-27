@@ -1,4 +1,3 @@
-// src/middleware/passport.js
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
@@ -18,7 +17,7 @@ function initializePassport() {
         if (!user) return done(null, false, { message: 'Invalid credentials' });
         if (!user.passwordHash) return done(null, false, { message: 'Invalid credentials' });
 
-        const ok = await argon2.verify(password, user.passwordHash);
+        const ok = await argon2.verify(user.passwordHash, password);
         if (!ok) return done(null, false, { message: 'Invalid credentials' });
 
         // remove sensitive fields before returning

@@ -1,17 +1,18 @@
 const s3Service = require('../services/s3Service');
 const { validationResult } = require('express-validator');
-const path = require('path');
 const prisma = require('../db/prismaClient');
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024; // optionally check (S3 head returns ContentLength)
+// 4MB Limit (Make sure this matches your frontend limit)
+const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024; 
+
+const BUCKET = process.env.AWS_S3_BUCKET_NAME;
+const REGION = process.env.AWS_REGION;
 
 exports.getMe = async (req, res, next) => {
   try {
-    const userId = req.user && req.user.id;
-    if (!userId) return res.status(401).json({ message: 'Not authenticated' });
-
-    // select safe fields only
+    const userId = req.user.id;
+    
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -34,22 +35,26 @@ exports.getMe = async (req, res, next) => {
   }
 };
 
-
 exports.getAvatarUploadUrl = async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const userId = req.user && req.user.id;
-    if (!userId) return res.status(401).json({ message: 'Not authenticated' });
-
+    const userId = req.user.id;
     const contentType = String(req.body.contentType).toLowerCase();
+    const originalName = req.body.originalName;
+
+    // 1. Validate File Type
     if (!ALLOWED_MIME.has(contentType)) {
-      return res.status(400).json({ message: 'Invalid contentType' });
+      return res.status(400).json({ message: 'Invalid contentType. Allowed: JPEG, PNG, WEBP' });
     }
 
-    const originalName = req.body.originalName;
-    const { uploadUrl, key, expiresIn } = await s3Service.getPresignedUploadUrl({ userId, contentType, originalName });
+    // 2. Generate Presigned URL
+    const { uploadUrl, key, expiresIn } = await s3Service.getPresignedUploadUrl({ 
+        userId, 
+        contentType, 
+        originalName 
+    });
 
     return res.json({ uploadUrl, key, expiresIn });
   } catch (err) {
@@ -57,85 +62,67 @@ exports.getAvatarUploadUrl = async (req, res, next) => {
   }
 };
 
-
 exports.completeAvatarUpload = async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const userId = req.user && req.user.id;
-    if (!userId) return res.status(401).json({ message: 'Not authenticated' });
+    const userId = req.user.id;
+    const key = req.body.key; 
 
-    const key = req.body.key;
-
-    // HEAD the object to verify it exists & retrieve metadata
+    // 1. Verify existence in S3 (Crucial Security Step)
     let head;
     try {
       head = await s3Service.headObject(key);
     } catch (err) {
-      // object not found or access denied
-      return res.status(400).json({ message: 'Uploaded object not found or inaccessible' });
+      return res.status(400).json({ message: 'File not found in S3. Did the upload succeed?' });
     }
 
+    // 2. Validate Metadata (Type & Size)
     const contentType = head.ContentType || '';
     const contentLength = head.ContentLength || 0;
+
     if (!ALLOWED_MIME.has(contentType)) {
-      return res.status(400).json({ message: 'Uploaded file type not allowed' });
+      // Optional: Delete the invalid file from S3 immediately
+      await s3Service.deleteObject(key);
+      return res.status(400).json({ message: 'File type validation failed' });
     }
+
     if (contentLength > MAX_FILE_SIZE_BYTES) {
-      return res.status(400).json({ message: 'Uploaded file too large' });
+       await s3Service.deleteObject(key);
+       return res.status(400).json({ message: 'File is too large' });
     }
 
-    // Build final public URL (prefer CloudFront if configured)
-    const cloudfront = process.env.CLOUDFRONT_URL && process.env.CLOUDFRONT_URL.trim();
-    let publicUrl;
-    if (cloudfront) {
-      // ensure no trailing slash on CLOUDFRONT_URL
-      publicUrl = `${cloudfront.replace(/\/$/, '')}/${key}`;
-    } else {
-      // S3 URL pattern (region aware)
-      const region = process.env.AWS_REGION;
-      const bucket = process.env.S3_BUCKET;
-      publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeURIComponent(key)}`;
-    }
+    const publicUrl = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
 
-    // Remove old avatar in S3 if it was uploaded previously and looks like our key
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { avatarUrl: true } });
+    // 4. Handle Cleanup: Delete the User's OLD avatar if it exists
+    const user = await prisma.user.findUnique({ 
+        where: { id: userId }, 
+        select: { avatarUrl: true } 
+    });
+
     if (user && user.avatarUrl) {
-      // try to extract a key that belongs to our bucket (simple heuristic)
       try {
-        const existingKey = (() => {
-          if (!user.avatarUrl) return null;
-          const cf = process.env.CLOUDFRONT_URL;
-          if (cf && user.avatarUrl.startsWith(cf)) {
-            // url like https://cdn/.../<key>
-            return user.avatarUrl.slice(cf.length + 1);
-          }
-          // s3 url form
-          // https://bucket.s3.region.amazonaws.com/<key>
-          const s3prefix = `https://${process.env.S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/`;
-          if (user.avatarUrl.startsWith(s3prefix)) {
-            return decodeURIComponent(user.avatarUrl.slice(s3prefix.length));
-          }
-          return null;
-        })();
+        const oldUrlObj = new URL(user.avatarUrl);
+        
+        // Host check: Ensure we only delete files from OUR bucket
+        // (Prevents issues if the user previously had a Google/Facebook avatar)
+        if (oldUrlObj.hostname.includes(BUCKET)) {
+             // .pathname includes the leading slash (e.g., "/avatars/123.jpg")
+             // .substring(1) removes it to get "avatars/123.jpg"
+             const oldKey = decodeURIComponent(oldUrlObj.pathname.substring(1));
 
-        if (existingKey && existingKey !== key) {
-          // attempt delete (best effort)
-          try {
-            await s3Service.deleteObject(existingKey);
-          } catch (e) {
-            // log and continue
-            console.warn('Failed to delete previous avatar from S3', e);
-          }
+             // Don't delete if it's the same key (unlikely, but safe)
+             if (oldKey && oldKey !== key) {
+                 await s3Service.deleteObject(oldKey);
+                 console.log(`Deleted old avatar: ${oldKey}`);
+             }
         }
       } catch (e) {
-        // ignore extraction errors
-        console.warn('Could not parse previous avatarUrl for deletion', e);
+        console.warn('Could not parse/delete old avatar URL:', e.message);
       }
     }
 
-    // update user
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { avatarUrl: publicUrl },
@@ -143,6 +130,48 @@ exports.completeAvatarUpload = async (req, res, next) => {
     });
 
     return res.json({ avatarUrl: updated.avatarUrl });
+
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.deleteAvatar = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    // 1. Find the user to get the current URL
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarUrl: true }
+    });
+
+    if (!user || !user.avatarUrl) {
+      return res.status(400).json({ message: 'No avatar to delete' });
+    }
+
+    // 2. Extract S3 Key and Delete from S3
+    const BUCKET = process.env.AWS_S3_BUCKET_NAME;
+    try {
+      const urlObj = new URL(user.avatarUrl);
+      if (urlObj.hostname.includes(BUCKET)) {
+        // Remove leading slash to get key "avatars/..."
+        const key = decodeURIComponent(urlObj.pathname.substring(1));
+        await s3Service.deleteObject(key);
+      }
+    } catch (err) {
+      console.warn('Failed to delete S3 object during avatar removal:', err);
+      // We continue anyway to remove the reference from DB
+    }
+
+    // 3. Update Database (Set to NULL)
+    await prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: null }
+    });
+
+    return res.json({ message: 'Avatar deleted successfully' });
+
   } catch (err) {
     return next(err);
   }

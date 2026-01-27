@@ -1,2 +1,2 @@
 # Vault-Relay-Backend
-A in development end to end encrypted messaging apliction backend
+A in development end to end encrypted messaging application backend

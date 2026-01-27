@@ -153,65 +153,63 @@ exports.markRead = async (req, res, next) => {
 
 exports.editMessage = async (req, res, next) => {
   try {
-    const {messageId} = req.params;
+    const { messageId } = req.params;
     const userId = req.user.id;
-    const {content} = req.body;
+    const { content } = req.body;
 
-    if (!content || content.trim() === ''){
-      return res.status(400).json({message: 'Content is required to edit a message'})
+    // Destructure the result
+    const { message, participants } = await MessageService.editMessage(messageId, userId, content);
+
+    // Broadcast via Socket
+    const io = req.app.get('io'); 
+    if (io) {
+        // 1. Update the Chat Room (The bubbles)
+        io.to(message.conversationId).emit('message:edited', message);
+
+        // 2. Update the Chat List (The preview on the left side)
+        participants.forEach(participantId => {
+            io.to(`user:${participantId}`).emit('conversation.updated', {
+                conversationId: message.conversationId,
+                lastMessage: message // Send the updated content
+            });
+        });
     }
 
-    const message = await prisma.message.findUnique({where: {id: messageId}});
+    // Send only the message back to the REST client
+    return res.status(200).json(message);
 
-    if (!message) {
-      return res.status(404).json({message: 'Message not found'});
-    }
-
-    if (message.senderId !== userId){
-      return res.status(403).json({message: 'Forbidden: You can only edit your own messsages'})
-    }
-
-    const updatedMessage = await prisma.message.update({
-      where: {id: messageId},
-      data: {
-        content: content,
-        editedAt: new Date()
-      },
-      include: {
-        sender: {
-          select: {id: true, username: true, displayName: true, avatarUrl: true}
-        }
-      }
-    });
-
-    return res.status(200).json(updatedMessage);
-      
-  }
-  catch (err) {
-    next(err);
+  } catch (err) {
+    return next(err);
   }
 };
 
 exports.deleteMessage = async (req, res, next) => {
   try {
-    const {messageId} = req.params;
+    const { messageId } = req.params;
     const userId = req.user.id;
 
-    const message = await prisma.message.findUnique({where: {id: messageId}});
+    const { id: deletedId, conversationId, participants } = await MessageService.deleteMessage(messageId, userId);
 
-    if (!message) {
-      return res.status(404).json({message: 'Message not found'});
+    const io = req.app.get('io');
+    if (io) {
+        // 1. Remove bubble from room
+        io.to(conversationId).emit('message:deleted', { id: deletedId, conversationId });
+
+        // 2. Update Chat List (Optional: Force a refresh or show "Message deleted")
+        participants.forEach(participantId => {
+             io.to(`user:${participantId}`).emit('conversation.updated', {
+                conversationId: conversationId,
+                // We send a partial message object to indicate the update
+                lastMessage: { 
+                    id: deletedId, 
+                    content: 'Message deleted', // Or handle logic to fetch the *previous* message
+                    createdAt: new Date() 
+                } 
+            });
+        });
     }
-
-    if (message.senderId !== userId){
-      return res.status(403).json({message: 'Forbidden: You can only delete your own messages'})
-    }
-
-    await prisma.message.delete({where: {id: messageId}});
-
-    return res.status(200).json({message: 'Message deleted successfully', id: messageId});
-  }
-  catch (err) {
-    next(err);
+    return res.status(200).json({ message: 'Message deleted successfully', id: deletedId });
+  } catch (err) {
+    return next(err);
   }
 };

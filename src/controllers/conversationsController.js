@@ -278,3 +278,49 @@ exports.getConversation = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.deleteConversation = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    const conversation = await prisma.conversation.findUnique({
+      where: { id },
+      include: {
+        participants: true, 
+      }
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversation not found' });
+    }
+
+    const myParticipant = conversation.participants.find(p => p.userId === userId);
+
+    if (!myParticipant) {
+      return res.status(403).json({ 
+        message: 'Forbidden: You are not a participant in this conversation.' 
+      });
+    }
+
+    if (conversation.type === 'GROUP') {
+      if (myParticipant.role !== 'ADMIN') {
+        return res.status(403).json({ 
+          message: 'Forbidden: Only group admins can delete this group.' 
+        });
+      }
+    } 
+    
+    await prisma.conversation.delete({
+      where: { id },
+    });
+
+    return res.status(200).json({ 
+      message: 'Conversation deleted successfully.',
+      conversationId: id
+    });
+
+  } catch (err) {
+    return next(err);
+  }
+};

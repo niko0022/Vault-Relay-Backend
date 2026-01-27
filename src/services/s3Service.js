@@ -3,47 +3,46 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
 const mime = require('mime-types');
 
-// --- config ---
-const REGION = process.env.AWS_REGION 
-const BUCKET = process.env.AWS_S3_BUCKET_NAME 
-const PRESIGN_EXPIRES = Number(process.env.S3_UPLOAD_EXPIRES) || 900; 
-const SIGNED_GET_EXPIRES = Number(process.env.S3_SIGNED_URL_EXPIRES) || 3600; 
-
-//  explicit creds
-const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
-const AWS_SECRET_KEY = process.env.AWS_SECRET_KEY;
+const REGION = process.env.AWS_REGION;
+const BUCKET = process.env.AWS_S3_BUCKET_NAME;
+const PRESIGN_EXPIRES = Number(process.env.S3_UPLOAD_EXPIRES) || 900; // 15 minutes
+const SIGNED_GET_EXPIRES = Number(process.env.S3_SIGNED_URL_EXPIRES) || 3600; // 1 hour
 
 if (!REGION || !BUCKET) {
-  console.warn('Warning: Missing AWS_REGION or S3 bucket env vars');
+  throw new Error('CRITICAL: Missing AWS_REGION or AWS_S3_BUCKET_NAME environment variables.');
 }
 
-// Create S3 client — prefer explicit credentials if provided.
-const s3Client = AWS_ACCESS_KEY_ID && AWS_SECRET_KEY
-  ? new S3Client({
-      region: REGION,
-      credentials: {
-        accessKeyId: AWS_ACCESS_KEY_ID,
-        secretAccessKey: AWS_SECRET_KEY,
-      },
-    })
-  : new S3Client({ region: REGION });
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
 
-// --- helpers ---
-function normalizeExtensionFromContentType(contentType) {
-  return mime.extension(contentType) || 'bin';
+function getExtension(contentType, originalName) {
+  // Try to get extension from Mime Type first
+  const ext = mime.extension(contentType);
+  if (ext) return ext;
+
+  // Fallback to original filename
+  if (originalName && originalName.includes('.')) {
+    return originalName.split('.').pop();
+  }
+  
+  return 'bin'; // Default fallback
 }
 
 function generateAvatarKey(userId, originalName, contentType) {
-  const ext = contentType
-    ? normalizeExtensionFromContentType(contentType)
-    : (originalName ? originalName.split('.').pop() : 'jpg');
+  const ext = getExtension(contentType, originalName);
   const safeName = `${Date.now()}-${uuidv4()}.${ext}`;
   return `avatars/${userId}/${safeName}`;
 }
 
-// Server-side presigned PUT URL for client->S3 uploads (used when doing client direct uploads)
+
 async function getPresignedUploadUrl({ userId, contentType, originalName }) {
   const key = generateAvatarKey(userId, originalName, contentType);
+  
   const cmd = new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
@@ -54,7 +53,7 @@ async function getPresignedUploadUrl({ userId, contentType, originalName }) {
   return { uploadUrl, key, expiresIn: PRESIGN_EXPIRES };
 }
 
-// Optionally: server-side helper to PUT a buffer directly from Node (if you want server->S3 uploads)
+
 async function putObjectBuffer({ key, buffer, contentType }) {
   const cmd = new PutObjectCommand({
     Bucket: BUCKET,
@@ -65,30 +64,43 @@ async function putObjectBuffer({ key, buffer, contentType }) {
   return s3Client.send(cmd);
 }
 
-// HEAD: return metadata (ContentType, ContentLength, etc.)
+
 async function headObject(key) {
   const cmd = new HeadObjectCommand({ Bucket: BUCKET, Key: key });
   return s3Client.send(cmd);
 }
 
-// DELETE object
+
 async function deleteObject(key) {
   const cmd = new DeleteObjectCommand({ Bucket: BUCKET, Key: key });
   return s3Client.send(cmd);
 }
 
-// Signed GET url to allow temporary downloads of private objects
-async function getSignedGetUrl(key, expires = SIGNED_GET_EXPIRES) {
-  const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: key });
-  return getSignedUrl(s3Client, cmd, { expiresIn: expires });
+/**
+ * Generate a signed URL for viewing/downloading a private file.
+ * @param {string} key 
+ * @param {string} [downloadName] 
+ */
+async function getSignedGetUrl(key, downloadName = null) {
+  const params = {
+    Bucket: BUCKET,
+    Key: key,
+  };
+
+  // If a name is provided, force the browser to download it as that name
+  if (downloadName) {
+    params.ResponseContentDisposition = `attachment; filename="${downloadName}"`;
+  }
+
+  const cmd = new GetObjectCommand(params);
+  return getSignedUrl(s3Client, cmd, { expiresIn: SIGNED_GET_EXPIRES });
 }
 
 module.exports = {
-  // exported functions
   getPresignedUploadUrl,
   putObjectBuffer,
   headObject,
   deleteObject,
   getSignedGetUrl,
-  s3Client, // export client for testing or advanced operations
+  s3Client,
 };

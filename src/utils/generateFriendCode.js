@@ -18,4 +18,4 @@ function generateByUsername(username) {
   return `${base}#${digitSuffix()}`;
 }
 
-module.exports = { generateByUsername };
+module.exports = generateByUsername ;

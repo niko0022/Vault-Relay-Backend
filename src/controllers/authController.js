@@ -3,8 +3,7 @@ const { validationResult } = require('express-validator');
 const tokenService = require('../services/tokenService');
 const argon2 = require('argon2');
 const prisma = require('../db/prismaClient');
-const generateByUsername = require('../utils/generateByUsername');
-
+const generateByUsername  = require('../utils/generateFriendCode');
 const REFRESH_COOKIE_NAME = 'refreshToken';
 const REFRESH_EXPIRES_SEC = Number(process.env.REFRESH_TOKEN_EXPIRES || 60 * 60 * 24 * 7);
 
@@ -43,7 +42,7 @@ exports.register = async (req, res, next) => {
     }
 
     const passwordHash = await argon2.hash(password);
-    const preferredBase = username 
+    const preferredBase = username;
     const friendCode = generateByUsername(preferredBase);
     let created;
 
@@ -76,7 +75,6 @@ exports.register = async (req, res, next) => {
         return res.status(409).json({ message: 'Duplicate field exists' });
       }
 
-      // other errors -> bubble up
       throw err;
     }
 

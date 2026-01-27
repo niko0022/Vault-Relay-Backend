@@ -20,6 +20,7 @@ router.get(
 
 router.post(
   '/:conversationId/messages',
+  auth,
   [
     param('conversationId').isUUID().withMessage('invalid conversation id'),
 
@@ -45,7 +46,26 @@ router.post(
   messagesController.sendMessage
 );
 
-// mark read
 router.post('/:conversationId/read', auth, messagesController.markRead);
+
+router.put(
+  '/:conversationId/messages/:messageId',
+  auth,
+  [
+    param('conversationId').isUUID().withMessage('invalid conversation id'),
+    param('messageId').isUUID().withMessage('invalid message id'),
+  ],
+  messagesController.editMessage
+);
+
+router.delete(
+  '/:conversationId/messages/:messageId',
+  auth,
+  [
+    param('conversationId').isUUID().withMessage('invalid conversation id'),
+    param('messageId').isUUID().withMessage('invalid message id'),
+  ],
+  messagesController.deleteMessage
+);
 
 module.exports = router;

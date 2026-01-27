@@ -15,3 +15,5 @@ async function isBlocked(userAId, userBId) {
 
     return !!block;
 }
+
+exports.isBlocked = isBlocked;

@@ -26,4 +26,10 @@ router.post(
   usersController.completeAvatarUpload
 );
 
+router.delete(
+  '/me/avatar',
+  auth,
+  usersController.deleteAvatar
+);
+
 module.exports = router;

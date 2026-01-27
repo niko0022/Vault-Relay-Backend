@@ -163,19 +163,16 @@ exports.editMessage = async (req, res, next) => {
     // Broadcast via Socket
     const io = req.app.get('io'); 
     if (io) {
-        // 1. Update the Chat Room (The bubbles)
         io.to(message.conversationId).emit('message:edited', message);
 
-        // 2. Update the Chat List (The preview on the left side)
         participants.forEach(participantId => {
             io.to(`user:${participantId}`).emit('conversation.updated', {
                 conversationId: message.conversationId,
-                lastMessage: message // Send the updated content
+                lastMessage: message 
             });
         });
     }
 
-    // Send only the message back to the REST client
     return res.status(200).json(message);
 
   } catch (err) {
@@ -192,17 +189,14 @@ exports.deleteMessage = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io) {
-        // 1. Remove bubble from room
         io.to(conversationId).emit('message:deleted', { id: deletedId, conversationId });
 
-        // 2. Update Chat List (Optional: Force a refresh or show "Message deleted")
         participants.forEach(participantId => {
              io.to(`user:${participantId}`).emit('conversation.updated', {
                 conversationId: conversationId,
-                // We send a partial message object to indicate the update
                 lastMessage: { 
                     id: deletedId, 
-                    content: 'Message deleted', // Or handle logic to fetch the *previous* message
+                    content: 'Message deleted', 
                     createdAt: new Date() 
                 } 
             });

@@ -3,10 +3,6 @@ const { body } = require('express-validator');
 const authController = require('../controllers/authController');
 const router = express.Router();
 
-const refreshLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // allow limited refresh attempts
-});
 
 //register route
 router.post(
@@ -49,7 +45,7 @@ router.post(
 );
 
 // Token refresh route
-router.post('/refresh', refreshLimiter, authController.refresh);
+router.post('/refresh', authController.refresh);
 
 // Logout route
 router.post('/logout', authController.logout);

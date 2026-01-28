@@ -1,6 +1,6 @@
-const prisma = require('../prismaClient'); 
+const prisma = require('../db/prismaClient'); 
 const {acceptFriendRequest} = require('../services/friendService');
-const isBlocked = require('../services/blockService')
+const { isBlocked } = require('../services/blockService');
 
 exports.addFriend = async (req, res, next) => {
    try {
@@ -15,7 +15,7 @@ exports.addFriend = async (req, res, next) => {
     }
 
     const friend = await prisma.user.findUnique({
-        where : { friendcode: userFriendCode}
+        where : { friendCode: userFriendCode}
     });
     if (!friend) {
         return res.status(404).json({ message: 'User with prvided friendcode not found' });
@@ -56,7 +56,6 @@ exports.addFriend = async (req, res, next) => {
             data: {
                 requesterId: meId,
                 addresseeId: friend.id,
-                message: req.body.message || null,
                 status: 'PENDING',
                 createdAt: new Date()
             }
@@ -304,7 +303,11 @@ exports.blockFriend = async (req, res, next) => {
         // update existing relationship to BLOCKED
         return tx.friendship.update({
           where: { id: existing.id },
-          data: { status: 'BLOCKED', updatedAt: new Date() },
+          data: { 
+            status: 'BLOCKED', 
+            updatedAt: new Date(),
+            blockedById: meId
+           },
         });
       };
 
@@ -313,6 +316,7 @@ exports.blockFriend = async (req, res, next) => {
           requesterId: meId,
           addresseeId: targetUser,
           status: 'BLOCKED',
+          blockedById: meId
         },
       });
     });
@@ -362,13 +366,20 @@ exports.unblockFriend = async (req, res, next) => {
       return res.status(404).json({ message: 'No blocked relationship found with the specified user' });
     }
     
-    if (friendship.requesterId === targetUser && friendship.addresseeId === meId) {
-      return res.status(403).json({ message: 'Cannot unblock: this user has blocked you. They must unblock you.' });
+    if (friendship.blockedById && friendship.blockedById !== meId) {
+      return res.status(403).json({ 
+        message: 'Cannot unblock: this user has blocked you. They must unblock you.' 
+      });
     }
 
     const unblockedFriendship = await prisma.friendship.update({
       where: { id: friendship.id },
-      data: { status: 'ACCEPTED', acceptedAt: new Date(), updatedAt: new Date() },
+      data: { 
+        status: 'ACCEPTED', 
+        acceptedAt: new Date(), 
+        updatedAt: new Date(),
+        blockedById: null 
+      },
     });
 
     const blocked = await isBlocked(meId, targetUser);

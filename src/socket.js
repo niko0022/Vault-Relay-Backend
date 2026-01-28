@@ -1,6 +1,5 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const cookie = require('cookie');
 const createAdapter = require('@socket.io/redis-adapter');
 const Redis = require('ioredis');
 const SocketService = require('./services/socketService');
@@ -32,30 +31,26 @@ function initializeSocketServer(httpServer) {
 
     io.use(async (socket, next) => {
         try {
-            const { token: tokenFromAuth } = socket.handshake.auth || {};
-            let token = tokenFromAuth;
-
-            if (!token && socket.handshake.headers && socket.handshake.headers.cookie) {
-                const cookies = cookie.parse(socket.handshake.headers.cookie || '');
-                token = cookies['accessToken']; 
-            }
-
+            const token = socket.handshake.auth?.token;
             if (!token) {
-                return next(new Error('Authentication error: token missing'));
+                return next(new Error('Authentication error: Token missing'));
             }
 
             const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
-            if (!ACCESS_SECRET) throw new Error('Server misconfigured: missing JWT_ACCESS_SECRET');
-
+            
             const payload = jwt.verify(token, ACCESS_SECRET);
             
             socket.user = { id: payload.sub, ...payload }; 
-
 
             await SocketService.attachSocket(io, socket);
 
             return next();
         } catch (err) {
+            if (err.name === 'TokenExpiredError') {
+                const error = new Error('Authentication error: Token expired');
+                error.data = { code: 'TOKEN_EXPIRED' }; 
+                return next(error);
+            }
             console.error("Socket Auth Error:", err.message);
             return next(new Error('Authentication error: Unauthorized'));
         }

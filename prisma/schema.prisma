@@ -1,10 +1,138 @@
 generator client {
-  provider = "prisma-client"
-  output = "./src/generated/prisma-client"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String           @id @default(uuid())
+  email                String           @unique
+  passwordHash         String
+  displayName          String?
+  username             String?          @unique
+  avatarUrl            String?
+  bio                  String?
+  status               UserStatus       @default(OFFLINE)
+  lastSeen             DateTime?
+  isVerified           Boolean          @default(false)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  friendCode           String           @unique @default(uuid())
+  conversationsA       Conversation[]   @relation("convA")
+  conversationsB       Conversation[]   @relation("convB")
+  friendshipsReceived  Friendship[]     @relation("friendshipAddressee")
+  friendshipsRequested Friendship[]     @relation("friendshipRequester")
+  sentMessages         Message[]        @relation("sentMessages")
+  receipts             MessageReceipt[]
+  participants         Participant[]
+  refreshTokens        RefreshToken[]
+}
+
+model Conversation {
+  id             String           @id @default(uuid())
+  type           ConversationType @default(DIRECT)
+  title          String?
+  avatarUrl      String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  lastMessageId  String?
+  participantAId String?
+  participantBId String?
+  participantA   User?            @relation("convA", fields: [participantAId], references: [id])
+  participantB   User?            @relation("convB", fields: [participantBId], references: [id])
+  messages       Message[]
+  participants   Participant[]
+
+  @@unique([participantAId, participantBId])
+  @@index([participantAId])
+  @@index([participantBId])
+}
+
+model Participant {
+  id             String          @id @default(uuid())
+  conversationId String
+  userId         String
+  role           ParticipantRole @default(MEMBER)
+  joinedAt       DateTime        @default(now())
+  mutedUntil     DateTime?
+  unreadCount    Int             @default(0)
+  conversation   Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Friendship {
+  id          String           @id @default(uuid())
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  acceptedAt   DateTime?
+  addressee    User             @relation("friendshipAddressee", fields: [addresseeId], references: [id])
+  requester   User             @relation("friendshipRequester", fields: [requesterId], references: [id])
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId])
+  @@index([requesterId])
+}
+
+model Message {
+  id             String             @id @default(uuid())
+  conversationId String
+  senderId       String
+  content        String
+  contentType    MessageContentType @default(TEXT)
+  replyToId      String?
+  editedAt       DateTime?
+  deleted        Boolean            @default(false)
+  createdAt      DateTime           @default(now())
+  attachmentUrl  String?
+  conversation   Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  replyTo        Message?           @relation("messageReplies", fields: [replyToId], references: [id])
+  replies        Message[]          @relation("messageReplies")
+  sender         User               @relation("sentMessages", fields: [senderId], references: [id])
+  receipts       MessageReceipt[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+model MessageReceipt {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@index([messageId])
+}
+
+model RefreshToken {
+  id             String         @id @default(uuid())
+  userId         String
+  tokenHash      String         @unique
+  createdAt      DateTime       @default(now())
+  lastUsedAt     DateTime?
+  expiresAt      DateTime
+  revoked        Boolean        @default(false)
+  replacedById   String?
+  userAgent      String?
+  deviceId       String?
+  replacedBy     RefreshToken?  @relation("tokenReplacement", fields: [replacedById], references: [id])
+  replacedTokens RefreshToken[] @relation("tokenReplacement")
+  user           User           @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 enum ConversationType {
@@ -36,149 +164,4 @@ enum UserStatus {
   OFFLINE
   AWAY
   DND
-}
-
-model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String
-  displayName  String?
-  username     String?    @unique
-  avatarUrl    String?
-  bio          String?
-  status       UserStatus @default(OFFLINE)
-  lastSeen     DateTime?
-  isVerified   Boolean    @default(false)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  friendCode   String     @unique @default(uuid())
-
-  sentMessages         Message[]        @relation("sentMessages")
-  conversationsA       Conversation[]   @relation("convA")
-  conversationsB       Conversation[]   @relation("convB")
-  participants         Participant[]
-  refreshTokens        RefreshToken[]
-  receipts             MessageReceipt[] // per-user read receipts
-  friendshipsRequested Friendship[]     @relation("friendshipRequester")
-  friendshipsReceived  Friendship[]     @relation("friendshipAddressee")
-}
-
-model Conversation {
-  id        String           @id @default(uuid())
-  type      ConversationType @default(DIRECT)
-  title     String?
-  avatarUrl String?
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-
-  participantAId String?
-  participantBId String?
-
-  lastMessageId String? // optional FK to latest message (stored as raw id)
-
-  participantA User? @relation("convA", fields: [participantAId], references: [id])
-  participantB User? @relation("convB", fields: [participantBId], references: [id])
-
-  participants Participant[]
-
-  // messages
-  messages Message[]
-
-  // Use pair uniqueness to ensure one conversation per user pair (only applies when both ids are set)
-  @@unique([participantAId, participantBId])
-  @@index([participantAId])
-  @@index([participantBId])
-}
-
-model Participant {
-  id             String          @id @default(uuid())
-  conversation   Conversation    @relation(fields: [conversationId], references: [id])
-  conversationId String
-  user           User            @relation(fields: [userId], references: [id])
-  userId         String
-  role           ParticipantRole @default(MEMBER)
-  joinedAt       DateTime        @default(now())
-  mutedUntil     DateTime?
-  unreadCount    Int             @default(0)
-
-  @@unique([conversationId, userId])
-  @@index([userId])
-}
-
-model Friendship {
-  id          String @id @default(uuid())
-  requester   User   @relation("friendshipRequester", fields: [requesterId], references: [id])
-  requesterId String
-  adressee    User   @relation("friendshipAddressee", fields: [addresseeId], references: [id])
-  addresseeId String
-
-  status    FriendshipStatus @default(PENDING)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  aceptedAt DateTime?
-
-  @@unique([requesterId, addresseeId])
-  @@index([addresseeId])
-  @@index([requesterId])
-}
-
-model Message {
-  id             String       @id @default(uuid())
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
-  conversationId String
-  sender         User         @relation("sentMessages", fields: [senderId], references: [id])
-  senderId       String
-
-  content     String
-  contentType MessageContentType @default(TEXT)
-  replyToId   String?
-  editedAt    DateTime?
-  deleted     Boolean            @default(false)
-  createdAt   DateTime           @default(now())
-
-  // optional attachments metadata (string path or URL)
-  attachmentUrl String?
-
-  // self-relation for replies (optional)
-  replyTo Message?  @relation("messageReplies", fields: [replyToId], references: [id])
-  replies Message[] @relation("messageReplies")
-
-  // receipts are per-user read markers (see MessageReceipt)
-  receipts MessageReceipt[]
-
-  @@index([conversationId, createdAt])
-  @@index([senderId])
-}
-
-model MessageReceipt {
-  id        String   @id @default(uuid())
-  message   Message  @relation(fields: [messageId], references: [id])
-  messageId String
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String
-  readAt    DateTime @default(now())
-
-  @@unique([messageId, userId]) // one receipt per (message,user)
-  @@index([userId])
-  @@index([messageId])
-}
-
-model RefreshToken {
-  id           String    @id @default(uuid())
-  user         User      @relation(fields: [userId], references: [id])
-  userId       String
-  tokenHash    String    @unique
-  createdAt    DateTime  @default(now())
-  lastUsedAt   DateTime?
-  expiresAt    DateTime
-  revoked      Boolean   @default(false)
-  replacedById String? // FK to the token that replaced this one (optional)
-  userAgent    String? // optional metadata
-  deviceId     String? // optional metadata
-
-  replacedBy     RefreshToken?  @relation("tokenReplacement", fields: [replacedById], references: [id])
-  replacedTokens RefreshToken[] @relation("tokenReplacement")
-
-  @@index([userId])
-  @@index([expiresAt])
 }

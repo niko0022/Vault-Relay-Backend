@@ -183,6 +183,7 @@ enum MessageContentType {
   MARKDOWN
   HTML
   SIGNAL_ENCRYPTED
+  SIGNAL_KEY_DISTRIBUTION
 }
 
 enum FriendshipStatus {

@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "MessageContentType" ADD VALUE 'SIGNAL_KEY_DISTRIBUTION';

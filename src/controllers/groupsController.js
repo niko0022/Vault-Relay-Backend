@@ -1,6 +1,19 @@
 const { validationResult } = require('express-validator');
 const prisma = require('../db/prismaClient');
 
+async function validateSignalKeys(userIds) {
+  // If list is empty, nothing to check
+  if (!userIds || userIds.length === 0) return;
+
+  const count = await prisma.identityKey.count({
+    where: { userId: { in: userIds } }
+  });
+
+  if (count !== userIds.length) {
+    throw new Error('One or more users have not set up encryption keys yet.');
+  }
+}
+
 exports.createGroup = async (req, res, next) => {
   try {
     const errors = validationResult(req);
@@ -9,10 +22,14 @@ exports.createGroup = async (req, res, next) => {
     const ownerId = req.user.id;
     const { title, participantIds = [], avatarUrl } = req.body;
 
-    // dedupe and ensure owner included
+    // Dedupe and ensure owner included
     const uniqueIds = Array.from(new Set([ownerId, ...(participantIds || [])]));
 
-    // Basic limit check
+    // 1. SIGNAL REQUIREMENT: Verify everyone has keys
+    // We cannot create a secure group with people who don't have keys.
+    await validateSignalKeys(uniqueIds);
+
+    // Limit check (Signal groups can technically be large, but 100 is a safe start)
     if (uniqueIds.length > 100) return res.status(400).json({ message: 'Group size limit exceeded' });
 
     const conv = await prisma.$transaction(async (tx) => {
@@ -33,10 +50,11 @@ exports.createGroup = async (req, res, next) => {
       return created;
     });
 
-    // notify participants via sockets
+    // Notify participants via sockets
     try {
-      const io = req.app && req.app.get ? req.app.get('io') : null;
+      const io = req.app.get('io');
       if (io) {
+        // Send to each user's personal room
         for (const p of conv.participants) {
           io.to(`user:${p.userId}`).emit('conversation.created', { conversation: conv });
         }
@@ -53,15 +71,19 @@ exports.addParticipant = async (req, res, next) => {
   try {
     const convId = req.params.id;
     const actorId = req.user.id;
-    const { userId } = req.body;
+    const { userId } = req.body; // The user being added
 
     if (!userId) return res.status(400).json({ message: 'userId required' });
+
+    // 1. SIGNAL REQUIREMENT: Check if the NEW user has keys
+    await validateSignalKeys([userId]);
 
     // Check conv exists and actor is admin
     const participantActor = await prisma.participant.findUnique({
       where: { conversationId_userId: { conversationId: convId, userId: actorId } },
       select: { role: true },
     });
+    
     if (!participantActor) return res.status(403).json({ message: 'Forbidden' });
     if (participantActor.role !== 'ADMIN') return res.status(403).json({ message: 'Only admins can add participants' });
 
@@ -71,13 +93,16 @@ exports.addParticipant = async (req, res, next) => {
       skipDuplicates: true,
     });
 
-    // Optionally increment participant.unreadCount initial value? Usually 0.
     // Notify via sockets
     try {
-      const io = req.app && req.app.get ? req.app.get('io') : null;
+      const io = req.app.get('io');
       if (io) {
+        // Notify the NEW user so they can fetch the group keys
         io.to(`user:${userId}`).emit('conversation.invite', { conversationId: convId });
-        io.to(`conversation:${convId}`).emit('participant.added', { conversationId: convId, userId });
+        io.to(`conv:${convId}`).emit('participant.added', { 
+            conversationId: convId, 
+            userId 
+        });
       }
     } catch (e) { console.error('socket emit failed', e); }
 
@@ -109,7 +134,7 @@ exports.removeParticipant = async (req, res, next) => {
       where: { conversationId: convId, userId: removeId },
     });
 
-    // Optionally if no participants remain, delete conversation (or archive)
+    // Clean up empty groups
     const remaining = await prisma.participant.count({ where: { conversationId: convId } });
     if (remaining === 0) {
       await prisma.conversation.delete({ where: { id: convId } });
@@ -117,10 +142,14 @@ exports.removeParticipant = async (req, res, next) => {
 
     // socket notify
     try {
-      const io = req.app && req.app.get ? req.app.get('io') : null;
+      const io = req.app.get('io');
       if (io) {
         io.to(`user:${removeId}`).emit('conversation.removed', { conversationId: convId });
-        io.to(`conversation:${convId}`).emit('participant.removed', { conversationId: convId, userId: removeId });
+
+        io.to(`conv:${convId}`).emit('participant.removed', { 
+            conversationId: convId, 
+            userId: removeId 
+        });
       }
     } catch (e) { console.error(e); }
 
@@ -130,13 +159,11 @@ exports.removeParticipant = async (req, res, next) => {
   }
 };
 
-
 exports.listParticipants = async (req, res, next) => {
   try {
     const convId = req.params.id;
     const userId = req.user.id;
 
-    // membership check
     const isParticipant = await prisma.participant.findUnique({
       where: { conversationId_userId: { conversationId: convId, userId: userId } },
     });
@@ -152,4 +179,3 @@ exports.listParticipants = async (req, res, next) => {
     next(err);
   }
 };
-

@@ -31,11 +31,14 @@ router.post(
       .escape(), 
     body('contentType')
       .optional()
-      .isIn(['TEXT', 'MARKDOWN', 'HTML'])
+      .isIn(['SIGNAL_ENCRYPTED', 'SIGNAL_KEY_DISTRIBUTION'])
       .withMessage('invalid content type'),
     body('attachmentUrl')
       .optional({ values: 'falsy' })
       .isURL().withMessage('attachmentUrl must be a valid URL'),
+    body('content')
+      .isBase64()
+      .withMessage('Encrypted content must be Base64 encoded'),
     body().custom((value, { req }) => {
       if (!req.body.content && !req.body.attachmentUrl) {
         throw new Error("either content or attachmentUrl is required");

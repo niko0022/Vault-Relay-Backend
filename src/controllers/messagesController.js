@@ -1,8 +1,7 @@
-const { validationResult, matchedData } = require('express-validator');
+const { validationResult } = require('express-validator');
 const prisma = require('../db/prismaClient');
 const { olderThanCursorWhere, parseCursorParam, makeCursorToken } = require('../utils/pagination');
 const MessageService = require('../services/messageService');
-
 
 exports.getMessages = async (req, res, next) => {
   try {
@@ -14,10 +13,10 @@ exports.getMessages = async (req, res, next) => {
     const conv = await prisma.conversation.findUnique({ where: { id: convId } });
     if (!conv) return res.status(404).json({ message: 'Conversation not found' });
 
-    const isParticipant =
-      (conv.participantAId && conv.participantAId === userId) ||
-      (conv.participantBId && conv.participantBId === userId) ||
-      (await prisma.participant.findFirst({ where: { conversationId: convId, userId } }));
+    // Helper to check participation (Works for both Direct and Group)
+    const isParticipant = await prisma.participant.findUnique({
+      where: { conversationId_userId: { conversationId: convId, userId } }
+    });
 
     if (!isParticipant) return res.status(403).json({ message: 'Forbidden' });
 
@@ -43,7 +42,7 @@ exports.getMessages = async (req, res, next) => {
       select: {
         id: true,
         content: true,
-        contentType: true,
+        contentType: true, // Frontend needs this to know IF it should decrypt
         senderId: true,
         attachmentUrl: true,
         replyToId: true,
@@ -54,7 +53,7 @@ exports.getMessages = async (req, res, next) => {
     });
 
     const hasNext = messages.length > limit;
-    const page = messages.slice(0, limit).reverse(); // oldest -> newest
+    const page = messages.slice(0, limit).reverse(); 
 
     const nextCursor = hasNext
       ? makeCursorToken({ id: messages[limit - 1].id, createdAt: messages[limit - 1].createdAt })
@@ -75,11 +74,14 @@ exports.sendMessage = async (req, res, next) => {
     const convId = req.params.conversationId;
     const { content, contentType, attachmentUrl, replyToId } = req.body;
 
+    // SIGNAL CHANGE: Detect if this is a "Control Message"
+    const isKeyDistribution = contentType === 'SIGNAL_KEY_DISTRIBUTION';
+
     const result = await MessageService.createMessage({
       senderId: userId,
       conversationId: convId,
       content,
-      contentType,
+      contentType, // Pass this through!
       attachmentUrl,
       replyToId
     });
@@ -88,17 +90,20 @@ exports.sendMessage = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
         io.to(`conv:${convId}`).emit('message', { message: result.message });
-        
-        const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
-        
-        result.recipients.forEach(uid => {
-            io.to(`user:${uid}`).emit('conversation.updated', {
-                conversationId: convId,
-                lastMessage: result.message,
-                unreadCount: unreadMap.get(uid),
-                updatedAt: new Date().toISOString()
+        if (!isKeyDistribution) {
+            const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
+            
+            result.recipients.forEach(uid => {
+                io.to(`user:${uid}`).emit('conversation.updated', {
+                    conversationId: convId,
+                    // Note: 'lastMessage.content' will be Ciphertext. 
+                    // The Frontend must decrypt this to show a preview.
+                    lastMessage: result.message,
+                    unreadCount: unreadMap.get(uid),
+                    updatedAt: new Date().toISOString()
+                });
             });
-        });
+        }
     }
 
     return res.status(201).json(result.message);
@@ -113,10 +118,6 @@ exports.markRead = async (req, res, next) => {
     const convId = req.params.conversationId;
     const lastReadMessageId = req.body.lastReadMessageId ? String(req.body.lastReadMessageId) : null;
 
-    const conv = await prisma.conversation.findUnique({ where: { id: convId } });
-    if (!conv) return res.status(404).json({ message: 'Conversation not found' });
-
-
     const membership = await prisma.participant.findUnique({
       where: { conversationId_userId: { conversationId: convId, userId } }
     });
@@ -130,12 +131,15 @@ exports.markRead = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io && result.marked > 0) {
+      // Notify the user who read it (to clear their badge)
       io.to(`user:${userId}`).emit('conversation.updated', { 
         conversationId: convId, 
         unreadCount: result.newUnreadCount 
       });
       
-      io.to(`conversation:${convId}`).emit('messages.read', {
+      // Notify the room (so sender sees "Read by X")
+      // FIX: Ensure consistency with 'conv:' prefix
+      io.to(`conv:${convId}`).emit('messages.read', {
         conversationId: convId,
         userId,
         markedCount: result.marked
@@ -155,20 +159,21 @@ exports.editMessage = async (req, res, next) => {
   try {
     const { messageId } = req.params;
     const userId = req.user.id;
-    const { content } = req.body;
+    // In Signal, 'content' here is the NEW Ciphertext
+    const { content } = req.body; 
 
-    // Destructure the result
     const { message, participants } = await MessageService.editMessage(messageId, userId, content);
 
-    // Broadcast via Socket
     const io = req.app.get('io'); 
     if (io) {
-        io.to(message.conversationId).emit('message:edited', message);
+        // FIX: Added 'conv:' prefix. 
+        // Previously: io.to(message.conversationId) <- THIS WOULD FAIL
+        io.to(`conv:${message.conversationId}`).emit('message:edited', message);
 
         participants.forEach(participantId => {
             io.to(`user:${participantId}`).emit('conversation.updated', {
                 conversationId: message.conversationId,
-                lastMessage: message 
+                lastMessage: message // Frontend must decrypt this new content
             });
         });
     }
@@ -189,14 +194,18 @@ exports.deleteMessage = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io) {
-        io.to(conversationId).emit('message:deleted', { id: deletedId, conversationId });
+        io.to(`conv:${conversationId}`).emit('message:deleted', { id: deletedId, conversationId });
 
         participants.forEach(participantId => {
              io.to(`user:${participantId}`).emit('conversation.updated', {
                 conversationId: conversationId,
+                // Even though the message is deleted, we update the preview.
+                // You might want to let the frontend handle the string "Message deleted"
+                // based on language settings, but this is fine for now.
                 lastMessage: { 
                     id: deletedId, 
                     content: 'Message deleted', 
+                    deleted: true, // Signal frontend needs this flag
                     createdAt: new Date() 
                 } 
             });

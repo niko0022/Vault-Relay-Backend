@@ -2,7 +2,10 @@ const prisma = require('../db/prismaClient');
 const { isBlocked } = require('./blockService');
 
 async function createMessage({ senderId, conversationId, content, contentType = 'TEXT', attachmentUrl, replyToId }) {
-    if (!content && !attachmentUrl) {
+
+    const isKeyDistribution = contentType === 'SIGNAL_KEY_DISTRIBUTION';
+    
+    if (!content && !attachmentUrl && !isKeyDistribution) {
         throw new Error('Message must have content or attachment');
     }
 
@@ -38,17 +41,16 @@ async function createMessage({ senderId, conversationId, content, contentType = 
             data: {
                 senderId,
                 conversationId,
-                content,
+                content: content || '', 
                 contentType,
                 attachmentUrl: attachmentUrl || null,
-                replyToId: replyToId || null, // FIX: Corrected variable spelling
+                replyToId: replyToId || null,
             },
-            // FIX: Merged into ONE include object
             include: {
                 sender: {
                     select: { id: true, username: true, avatarUrl: true, displayName: true }
                 },
-                replyTo: { // FIX: Used correct Relation Name (not ID column) and fixed spelling
+                replyTo: {
                     select: { id: true, content: true, senderId: true }
                 }
             },
@@ -61,24 +63,26 @@ async function createMessage({ senderId, conversationId, content, contentType = 
 
         const recipients = participants.map((p) => p.userId).filter((id) => id !== senderId);
 
-        if (recipients.length > 0) {
-            await tx.participant.updateMany({
-                where: { conversationId, userId: { in: recipients } },
-                data: { unreadCount: { increment: 1 } },
+        if (!isKeyDistribution) {
+            if (recipients.length > 0) {
+                await tx.participant.updateMany({
+                    where: { conversationId, userId: { in: recipients } },
+                    data: { unreadCount: { increment: 1 } },
+                });
+            }
+
+            await tx.conversation.update({
+                where: { id: conversationId },
+                data: { lastMessageId: message.id, updatedAt: new Date() },
             });
         }
-
-        await tx.conversation.update({
-            where: { id: conversationId },
-            data: { lastMessageId: message.id, updatedAt: new Date() },
-        });
 
         return {
             message: message,
             recipients: recipients,
             updatedParticipants: await tx.participant.findMany({
                 where: { conversationId, userId: { in: recipients } },
-                select: { userId: true, unreadCount: true }, // FIX: 'unreadcount' -> 'unreadCount'
+                select: { userId: true, unreadCount: true },
             }),
         };
     });
@@ -108,7 +112,7 @@ async function markAsRead({ userId, conversationId, lastReadMessageId = null }) 
                 ...dateFilter,
                 receipts: {
                     none: { userId }
-                }
+                },
             },
             select: { id: true }
         });
@@ -141,7 +145,6 @@ async function markAsRead({ userId, conversationId, lastReadMessageId = null }) 
 
         let finalCount = updatedParticipant.unreadCount;
         
-        // Safety check to ensure unreadCount never stays negative
         if (finalCount < 0) {
             finalCount = 0;
             await tx.participant.update({
@@ -155,7 +158,6 @@ async function markAsRead({ userId, conversationId, lastReadMessageId = null }) 
 }
 
 async function editMessage(messageId, userId, newContent) {
-    // 1. Validation & Find
     if (!newContent || newContent.trim() === '') {
         throw new Error('Content is required');
     }
@@ -163,22 +165,22 @@ async function editMessage(messageId, userId, newContent) {
     if (!message) throw new Error('Message not found');
     if (message.senderId !== userId) throw new Error('Forbidden: You can only edit your own messages');
 
-    // 2. Update
     const updatedMessage = await prisma.message.update({
         where: { id: messageId },
-        data: { content: newContent, editedAt: new Date() },
+        data: { 
+            content: newContent, // This is now the NEW ciphertext
+            editedAt: new Date() 
+        },
         include: {
             sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } }
         }
     });
 
-    // 3. Fetch Participants (For Socket Broadcast)
     const participants = await prisma.participant.findMany({
         where: { conversationId: message.conversationId },
         select: { userId: true }
     });
 
-    // Return both the message and the list of user IDs
     return { 
         message: updatedMessage, 
         participants: participants.map(p => p.userId) 
@@ -190,13 +192,11 @@ async function deleteMessage(messageId, userId) {
     if (!message) throw new Error('Message not found');
     if (message.senderId !== userId) throw new Error('Forbidden: You can only delete your own messages');
 
-    // 1. Fetch Participants BEFORE delete
     const participants = await prisma.participant.findMany({
         where: { conversationId: message.conversationId },
         select: { userId: true }
     });
 
-    // 2. Delete
     await prisma.message.delete({ where: { id: messageId } });
 
     return { 
@@ -205,8 +205,6 @@ async function deleteMessage(messageId, userId) {
         participants: participants.map(p => p.userId)
     };
 }
-
-module.exports = { createMessage, editMessage, deleteMessage };
 
 module.exports = {
     createMessage,

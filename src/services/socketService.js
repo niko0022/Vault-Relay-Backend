@@ -1,6 +1,7 @@
 const prisma = require('../db/prismaClient');
 const MessageService = require('../services/messageService'); 
 const userSockets = new Map();
+const { validateSignalPayload } = require('../utils/singalValidation');
 
 async function notifyFriendsPresence(io, userId, payload) {
   try {
@@ -106,6 +107,8 @@ function registerHandlers(io, socket) {
       const senderId = socket.user.id;
       const { conversationId, content, contentType, attachmentUrl, replyToId } = payload;
 
+      validateSignalPayload(content, contentType);  
+
       const result = await MessageService.createMessage({
         senderId,
         conversationId,
@@ -145,6 +148,7 @@ function registerHandlers(io, socket) {
       const userId = socket.user.id;
       const { messageId, content } = data;
 
+      validateSignalPayload(content, null); // contentType is not available in edit_message
       // Call Service
       const { message, participants } = await MessageService.editMessage(messageId, userId, content);
 

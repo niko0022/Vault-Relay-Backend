@@ -9,7 +9,6 @@ const {initializePassport} = require('./middleware/passport');
 const passport = initializePassport(require('passport'));
 const app = express();
 
-// Basic middleware
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
 app.use(morgan('dev'));
@@ -19,21 +18,20 @@ app.use(cookieParser());
 app.use(passport.initialize());
 
 
-// Attach prisma client to request for convenience in handlers
 app.use((req, res, next) => {
     req.prisma = prisma;
     next();
 });
 
-// Health endpoint
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-// auth route 
 app.use('/auth', require('./routes/authRoutes'));
 app.use('/users', require('./routes/usersRoutes'));
 app.use('/conversations', require('./routes/conversationsRoutes'));
 app.use('/conversations', require('./routes/messagesRoutes'));
 app.use('/friends', require('./routes/friendRoutes'));
+app.use('/keys', require('./routes/keysRoutes'));
 
 // Global error handler
 app.use((err, req, res, next) => {

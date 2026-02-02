@@ -2,7 +2,13 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const createAdapter = require('@socket.io/redis-adapter');
 const Redis = require('ioredis');
-const SocketService = require('./services/socketService');
+const SocketService = require('./services/socketService'); 
+const { RateLimiterMemory } = require('rate-limiter-flexible');
+
+const rateLimiter = new RateLimiterMemory({
+    points: 10, 
+    duration: 1, 
+});
 
 let io;
 
@@ -58,6 +64,16 @@ function initializeSocketServer(httpServer) {
 
     io.on('connection', (socket) => {
         console.log(`User connected: ${socket.user.id}`);
+
+        socket.use(async ([event, ...args], next) => {
+            try {
+                await rateLimiter.consume(socket.user.id); // Consume 1 point
+                next();
+            } catch (e) {
+                // Block the request if limit exceeded
+                next(new Error('Rate limit exceeded. Slow down.'));
+            }
+        });
 
         SocketService.registerHandlers(io, socket);
 

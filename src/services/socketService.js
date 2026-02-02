@@ -1,7 +1,7 @@
 const prisma = require('../db/prismaClient');
 const MessageService = require('../services/messageService'); 
 const userSockets = new Map();
-const { validateSignalPayload } = require('../utils/singalValidation');
+const { validateSignalPayload } = require('../utils/signalValidation');
 
 async function notifyFriendsPresence(io, userId, payload) {
   try {

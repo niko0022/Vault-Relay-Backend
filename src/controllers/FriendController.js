@@ -61,6 +61,11 @@ exports.addFriend = async (req, res, next) => {
             }
         });
    
+      const io = req.app.get('io');
+      if (io) {
+          io.to(`user:${friend.id}`).emit('friendHandler.request', { friendship: createdFriendship });
+      }
+
       return res.status(201).json({ type: 'created', friendship: createdFriendship });
     } catch (err) {
       // Prisma unique constraint collision (someone might have created the same relationship concurrently)
@@ -165,6 +170,14 @@ exports.acceptFriend = async (req, res, next) => {
 
     const result = await acceptFriendRequest({ friendshipId, userId: meId });
 
+    // Assuming acceptFriendRequest returns the updated friendship object.
+    const io = req.app.get('io');
+    if (io && result) {
+      // The requester sent the request, so they need to know it was accepted
+      const otherUserId = result.requesterId === meId ? result.addresseeId : result.requesterId;
+      io.to(`user:${otherUserId}`).emit('friendHandler.accepted', { friendship: result });
+    }
+
     return res.status(200).json({
       message: 'Friend request accepted',
       ...result, 
@@ -219,6 +232,11 @@ exports.declineFriend = async (req, res, next) => {
       data: { status: 'DECLINED', updatedAt: new Date() }
     })
 
+    const io = req.app.get('io');
+    if (io) {
+        io.to(`user:${friendship.requesterId}`).emit('friendHandler.declined', { friendshipId });
+    }
+
     return res.status(200).json({message: 'Friend request declined', friendship: declined });
   } catch (err) {
     return next(err)
@@ -256,6 +274,11 @@ exports.cancelFriendRequest = async (req, res, next) => {
       where: {id: friendshipId},
       data: { status: 'CANCELLED', updatedAt: new Date() }
     })
+
+    const io = req.app.get('io');
+    if (io) {
+        io.to(`user:${friendship.addresseeId}`).emit('friendHandler.cancelled', { friendshipId });
+    }
 
     return res.status(200).json({message: 'Friend request cancelled', friendship: cancelled });
   } catch (err) {

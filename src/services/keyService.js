@@ -1,8 +1,8 @@
 const prisma = require('../db/prismaClient');
 
-async function uploadKeys(userId, { registrationId, identityKey, signedPreKey, oneTimePreKeys }) {
+async function uploadKeys(userId, { registrationId, identityKey, signedPreKey, kyberPreKey, oneTimePreKeys }) {
   return prisma.$transaction(async (tx) => {
-    
+
     if (identityKey) {
       await tx.identityKey.upsert({
         where: { userId },
@@ -14,29 +14,46 @@ async function uploadKeys(userId, { registrationId, identityKey, signedPreKey, o
     if (signedPreKey) {
       await tx.signedPreKey.upsert({
         where: { userId },
-        update: { 
-            keyId: signedPreKey.keyId,
-            publicKey: signedPreKey.publicKey,
-            signature: signedPreKey.signature
+        update: {
+          keyId: signedPreKey.keyId,
+          publicKey: signedPreKey.publicKey,
+          signature: signedPreKey.signature
         },
         create: {
-            userId,
-            keyId: signedPreKey.keyId,
-            publicKey: signedPreKey.publicKey,
-            signature: signedPreKey.signature
+          userId,
+          keyId: signedPreKey.keyId,
+          publicKey: signedPreKey.publicKey,
+          signature: signedPreKey.signature
+        }
+      });
+    }
+
+    if (kyberPreKey) {
+      await tx.kyberPreKey.upsert({
+        where: { userId },
+        update: {
+          keyId: kyberPreKey.keyId,
+          publicKey: kyberPreKey.publicKey,
+          signature: kyberPreKey.signature
+        },
+        create: {
+          userId,
+          keyId: kyberPreKey.keyId,
+          publicKey: kyberPreKey.publicKey,
+          signature: kyberPreKey.signature
         }
       });
     }
 
     if (oneTimePreKeys && oneTimePreKeys.length > 0) {
       const existing = await tx.oneTimePreKey.findMany({
-        where: { 
+        where: {
           userId,
           keyId: { in: oneTimePreKeys.map(k => k.keyId) }
         },
         select: { keyId: true }
       });
-      
+
       const existingIds = new Set(existing.map(e => e.keyId));
       const newKeys = oneTimePreKeys.filter(k => !existingIds.has(k.keyId));
 
@@ -57,14 +74,15 @@ async function getPreKeyBundle(targetUserId) {
   return prisma.$transaction(async (tx) => {
     const identity = await tx.identityKey.findUnique({ where: { userId: targetUserId } });
     const signedPreKey = await tx.signedPreKey.findUnique({ where: { userId: targetUserId } });
+    const kyberPreKey = await tx.kyberPreKey.findUnique({ where: { userId: targetUserId } });
 
-    if (!identity || !signedPreKey) {
+    if (!identity || !signedPreKey || !kyberPreKey) {
       throw new Error('User has not set up E2EE keys yet.');
     }
 
     const oneTimePreKey = await tx.oneTimePreKey.findFirst({
       where: { userId: targetUserId },
-      orderBy: { keyId: 'asc' } // Take the oldest one
+      orderBy: { keyId: 'asc' }
     });
 
     if (oneTimePreKey) {
@@ -80,12 +98,24 @@ async function getPreKeyBundle(targetUserId) {
         publicKey: signedPreKey.publicKey,
         signature: signedPreKey.signature
       },
+      kyberPreKey: {
+        keyId: kyberPreKey.keyId,
+        publicKey: kyberPreKey.publicKey,
+        signature: kyberPreKey.signature
+      },
       oneTimePreKey: oneTimePreKey ? {
         keyId: oneTimePreKey.keyId,
         publicKey: oneTimePreKey.publicKey
-      } : null 
+      } : null
     };
   });
 }
 
-module.exports = { uploadKeys, getPreKeyBundle };
+async function getPreKeyCount(userId) {
+  const count = await prisma.oneTimePreKey.count({
+    where: { userId }
+  });
+  return count;
+}
+
+module.exports = { uploadKeys, getPreKeyBundle, getPreKeyCount };

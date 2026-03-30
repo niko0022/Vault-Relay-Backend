@@ -59,6 +59,15 @@ exports.getOrCreateConversation = async (req, res, next) => {
       }
     }
 
+    const io = req.app.get('io');
+    if (io) {
+       // getOrCreate is often called to start a new chat. We can emit conversation.created 
+       // but only if it's newly created. To be safe, emit the returned conversation so both get it.
+       // The frontend should ignore if it already has it.
+       io.to(`user:${a}`).emit('conversation.created', { conversation: conv });
+       io.to(`user:${b}`).emit('conversation.created', { conversation: conv });
+    }
+
     return res.json({ conversation: conv });
   } catch (err) {
     next(err);
@@ -127,66 +136,47 @@ exports.listConversations = async (req, res, next) => {
       where: prismaWhere,
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
+      include: {
+        // Fetch the unread count directly from this user's Participant row
+        participants: {
+          where: { userId },
+          select: { unreadCount: true }
+        },
+        // Fetch only the single latest message that isn't a KEY_DISTRIBUTION
+        messages: {
+          where: { contentType: { not: 'SIGNAL_KEY_DISTRIBUTION' } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            content: true,
+            contentType: true,
+            senderId: true,
+            createdAt: true
+          }
+        }
+      }
     });
 
     const hasNext = convs.length > limit;
     const page = convs.slice(0, limit);
-    const convIds = page.map((c) => c.id);
 
-    if (convIds.length === 0) {
+    if (page.length === 0) {
       return res.json({ conversations: [], nextCursor: null, hasNext: false });
     }
 
-    const lastMessagesRows = await prisma.$queryRaw`
-      SELECT DISTINCT ON (m."conversationId")
-        m."conversationId",
-        m.id,
-        m.content,
-        m."contentType",
-        m."senderId",
-        m."createdAt"
-      FROM "Message" m
-      WHERE m."conversationId" = ANY(${convIds})
-        AND m."contentType" <> 'SIGNAL_KEY_DISTRIBUTION'
-      ORDER BY m."conversationId", m."createdAt" DESC, m.id DESC
-    `;
-
-    const lastMessageMap = new Map();
-    for (const row of lastMessagesRows) {
-      lastMessageMap.set(row.conversationId, {
-        id: row.id,
-        content: row.content, 
-        contentType: row.contentType, 
-        senderId: row.senderId,
-        createdAt: row.createdAt,
-      });
-    }
-
-    const unreadRows = await prisma.$queryRaw`
-      SELECT m."conversationId", COUNT(*)::int AS count
-      FROM "Message" m
-      WHERE m."conversationId" = ANY(${convIds})
-        AND m."senderId" <> ${userId}
-        AND m."contentType" <> 'SIGNAL_KEY_DISTRIBUTION' 
-        AND NOT EXISTS (
-          SELECT 1 FROM "MessageReceipt" r
-          WHERE r."messageId" = m.id
-            AND r."userId" = ${userId}
-        )
-      GROUP BY m."conversationId"
-    `;
-
-    const unreadMap = new Map();
-    for (const r of unreadRows) {
-      unreadMap.set(r.conversationId, Number(r.count));
-    }
-
+    // Map Prisma includes to the exact shape the frontend expects
     const enriched = page.map((conv) => {
-      const last = lastMessageMap.get(conv.id) || null;
-      const unreadCount = unreadMap.get(conv.id) || 0;
+      const p = conv.participants[0];
+      const unreadCount = p ? p.unreadCount : 0;
+      const lastMessage = conv.messages.length > 0 ? conv.messages[0] : null;
+
+      // Clean up the object to avoid sending the nested arrays
+      const { participants, messages, ...rest } = conv;
+
       return {
-        ...conv,
-        lastMessage: last,
+        ...rest,
+        lastMessage,
         unreadCount,
       };
     });
@@ -206,67 +196,47 @@ exports.getConversation = async (req, res, next) => {
     const userId = req.user.id;
     const convId = req.params.id;
 
-    const conv = await prisma.conversation.findUnique({ where: { id: convId } });
+    const conv = await prisma.conversation.findUnique({ 
+      where: { id: convId },
+      include: {
+        participants: {
+          where: { userId },
+          select: { unreadCount: true }
+        },
+        messages: {
+          where: { contentType: { not: 'SIGNAL_KEY_DISTRIBUTION' } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            conversationId: true,
+            content: true,
+            contentType: true,
+            senderId: true,
+            attachmentUrl: true,
+            replyToId: true,
+            editedAt: true,
+            deleted: true,
+            createdAt: true
+          }
+        }
+      } 
+    });
+    
     if (!conv) return res.status(404).json({ message: 'Conversation not found' });
 
-    const isDirectParticipant =
-      (conv.participantAId && conv.participantAId === userId) ||
-      (conv.participantBId && conv.participantBId === userId);
-
-    let isParticipant = Boolean(isDirectParticipant);
-
-    if (!isParticipant) {
-      const participant = await prisma.participant.findFirst({
-        where: { conversationId: convId, userId },
-        select: { id: true },
-      });
-      isParticipant = Boolean(participant);
-    }
-
+    // Since we included participants where userId matches, we can use that to check membership
+    const isParticipant = conv.participants.length > 0;
     if (!isParticipant) return res.status(403).json({ message: 'Forbidden' });
 
-    const lastMessageRows = await prisma.$queryRaw`
-      SELECT
-        m.id,
-        m."conversationId",
-        m.content,
-        m."contentType",
-        m."senderId",
-        m."attachmentUrl" as "attachmentUrl",
-        m."replyToId",
-        m."editedAt",
-        m."deleted",
-        m."createdAt"
-      FROM "Message" m
-      WHERE m."conversationId" = ${convId}
-        AND m."contentType" <> 'SIGNAL_KEY_DISTRIBUTION'
-      ORDER BY m."createdAt" DESC, m.id DESC
-      LIMIT 1
-    `;
+    const lastMessage = conv.messages.length > 0 ? conv.messages[0] : null;
+    const unreadCount = conv.participants[0].unreadCount;
 
-    const lastMessage = (Array.isArray(lastMessageRows) && lastMessageRows.length > 0)
-      ? lastMessageRows[0]
-      : null;
-
-    const unreadRows = await prisma.$queryRaw`
-      SELECT COUNT(*)::int AS count
-      FROM "Message" m
-      WHERE m."conversationId" = ${convId}
-        AND m."senderId" <> ${userId}
-        AND m."contentType" <> 'SIGNAL_KEY_DISTRIBUTION'
-        AND NOT EXISTS (
-          SELECT 1 FROM "MessageReceipt" r
-          WHERE r."messageId" = m.id
-            AND r."userId" = ${userId}
-        )
-    `;
-
-    const unreadCount = (Array.isArray(unreadRows) && unreadRows.length > 0)
-      ? Number(unreadRows[0].count)
-      : 0;
+    // Clean up the object to match frontend expectations
+    const { participants, messages, ...rest } = conv;
 
     return res.json({
-      conversation: conv,
+      conversation: rest,
       lastMessage,
       unreadCount,
     });
@@ -310,6 +280,13 @@ exports.deleteConversation = async (req, res, next) => {
     await prisma.conversation.delete({
       where: { id },
     });
+
+    const io = req.app.get('io');
+    if (io) {
+      conversation.participants.forEach(p => {
+         io.to(`user:${p.userId}`).emit('conversation.deleted', { conversationId: id });
+      });
+    }
 
     return res.status(200).json({ 
       message: 'Conversation deleted successfully.',

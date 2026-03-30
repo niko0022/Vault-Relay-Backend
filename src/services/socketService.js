@@ -109,10 +109,24 @@ function registerHandlers(io, socket) {
 
       validateSignalPayload(content, contentType);  
 
+      // Convert WASM bridge binary payload to a clean JSON string for the DB.
+      // The body is a Uint8Array which JSON.stringify would corrupt into {"0":72,"1":101,...},
+      // so we Base64-encode it first for compact, lossless storage.
+      let contentString = content;
+      if (contentType === 'SIGNAL_ENCRYPTED' && typeof content === 'object') {
+        const bodyBytes = content.body instanceof Uint8Array
+          ? content.body
+          : new Uint8Array(Object.values(content.body));
+        contentString = JSON.stringify({
+          type: content.type,
+          body: Buffer.from(bodyBytes).toString('base64')
+        });
+      }
+
       const result = await MessageService.createMessage({
         senderId,
         conversationId,
-        content,
+        content: contentString,
         contentType,
         attachmentUrl,
         replyToId,
@@ -148,9 +162,20 @@ function registerHandlers(io, socket) {
       const userId = socket.user.id;
       const { messageId, content } = data;
 
-      validateSignalPayload(content, null); // contentType is not available in edit_message
+      // Same Base64 encoding as send_message for edited encrypted content
+      let contentString = content;
+      if (typeof content === 'object') {
+        const bodyBytes = content.body instanceof Uint8Array
+          ? content.body
+          : new Uint8Array(Object.values(content.body));
+        contentString = JSON.stringify({
+          type: content.type,
+          body: Buffer.from(bodyBytes).toString('base64')
+        });
+      }
+
       // Call Service
-      const { message, participants } = await MessageService.editMessage(messageId, userId, content);
+      const { message, participants } = await MessageService.editMessage(messageId, userId, contentString);
 
       // 1. Notify Room (Update the bubble)
       io.to(`conv:${message.conversationId}`).emit('message:edited', message);

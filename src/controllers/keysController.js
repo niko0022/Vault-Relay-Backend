@@ -20,3 +20,13 @@ exports.getPreKeyBundle = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getPreKeyCount = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const count = await keyService.getPreKeyCount(userId);
+    return res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+};

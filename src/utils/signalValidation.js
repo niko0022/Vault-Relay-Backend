@@ -15,11 +15,19 @@ function validateSignalPayload(content, contentType) {
     return str && (str.length % 4 === 0) && base64Regex.test(str);
   };
 
-  // If we are sending an encrypted blob, verify structure
+  // If we are sending an encrypted blob, verify structure from WASM bridge
+  // The WASM bridge returns { type: number, body: Uint8Array | Array }
   if (contentType === 'SIGNAL_ENCRYPTED' || !contentType) { 
-    // (!contentType handles the 'edit_message' case where we assume encryption)
-    if (!isBase64(content)) {
-      throw new Error('Security Error: Encrypted content must be a valid Base64 string');
+    if (typeof content === 'string') {
+      if (!isBase64(content)) {
+        throw new Error('Security Error: Encrypted string content must be a valid Base64 string');
+      }
+    } else if (typeof content === 'object' && content !== null) {
+      if (typeof content.type !== 'number' || !content.body) {
+        throw new Error('Security Error: Encrypted object content must have {type: number, body: [...]} structure');
+      }
+    } else {
+      throw new Error('Security Error: Encrypted content format unrecognized');
     }
   }
 }

@@ -30,9 +30,17 @@ function initializePassport() {
     }
   ));
 
+  // Extract access token from httpOnly cookie
+  function extractFromCookie(req) {
+    if (req && req.cookies && req.cookies.accessToken) {
+      return req.cookies.accessToken;
+    }
+    return null;
+  }
+
   // JWT strategy
   passport.use(new JwtStrategy({
-    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+    jwtFromRequest: extractFromCookie,
     secretOrKey: ACCESS_SECRET,
     passReqToCallback: false,
   }, async (payload, done) => {

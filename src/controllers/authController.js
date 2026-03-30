@@ -5,7 +5,16 @@ const argon2 = require('argon2');
 const prisma = require('../db/prismaClient');
 const generateByUsername  = require('../utils/generateFriendCode');
 const REFRESH_COOKIE_NAME = 'refreshToken';
+const ACCESS_COOKIE_NAME = 'accessToken';
+const ACCESS_EXPIRES_SEC = Number(process.env.ACCESS_TOKEN_EXPIRES || 300);
 const REFRESH_EXPIRES_SEC = Number(process.env.REFRESH_TOKEN_EXPIRES || 60 * 60 * 24 * 7);
+
+const COOKIE_OPTS = {
+  httpOnly: true,
+  secure: process.env.COOKIE_SECURE === 'true',
+  sameSite: 'lax',
+  path: '/',
+};
 
 // Helper: wrap passport authenticate to use custom callback (so we can return tokens)
 function authenticateLocal(req, res) {
@@ -78,27 +87,21 @@ exports.register = async (req, res, next) => {
       throw err;
     }
 
-    const safeUser = { ...created };
-    delete safeUser.passwordHash;
+    const { passwordHash: _hash, ...safeUser } = created;
 
     const accessToken = tokenService.signAccessToken(created.id);
 
     const rtResult = await tokenService.issueRefreshToken({ userId: created.id, userAgent: req.get('user-agent') });
     const refreshPlain = rtResult?.token ?? rtResult?.plain ?? (typeof rtResult === 'string' ? rtResult : null);
 
+    res.cookie(ACCESS_COOKIE_NAME, accessToken, { ...COOKIE_OPTS, maxAge: ACCESS_EXPIRES_SEC * 1000 });
     if (refreshPlain) {
-      res.cookie(REFRESH_COOKIE_NAME, refreshPlain, {
-        httpOnly: true,
-        secure: process.env.COOKIE_SECURE === 'true',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: REFRESH_EXPIRES_SEC * 1000,
-      });
+      res.cookie(REFRESH_COOKIE_NAME, refreshPlain, { ...COOKIE_OPTS, maxAge: REFRESH_EXPIRES_SEC * 1000 });
     } else {
       console.warn('issueRefreshToken did not return plaintext token', rtResult);
     }
 
-    return res.status(201).json({ accessToken, user: safeUser });
+    return res.status(201).json({ user: safeUser });
   } catch (err) {
     // final catch: map DB unique errors (if we missed above)
     if (err?.code === 'P2002' || err?.code === '23505') {
@@ -123,22 +126,15 @@ exports.login = async (req, res, next) => {
     const accessToken = tokenService.signAccessToken(user.id);
     const rtResult = await tokenService.issueRefreshToken({ userId: user.id, userAgent: req.get('user-agent') });
 
-    // normalize plaintext from varied return shapes: { token }, { plain }, just-string, etc.
     const refreshPlain = rtResult?.token ?? rtResult?.plain ?? (typeof rtResult === 'string' ? rtResult : null);
 
+    res.cookie(ACCESS_COOKIE_NAME, accessToken, { ...COOKIE_OPTS, maxAge: ACCESS_EXPIRES_SEC * 1000 });
     if (refreshPlain) {
-      res.cookie(REFRESH_COOKIE_NAME, refreshPlain, {
-        httpOnly: true,
-        secure: process.env.COOKIE_SECURE === 'true',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: REFRESH_EXPIRES_SEC * 1000,
-      });
+      res.cookie(REFRESH_COOKIE_NAME, refreshPlain, { ...COOKIE_OPTS, maxAge: REFRESH_EXPIRES_SEC * 1000 });
     } else {
-      // if service unexpectedly didn't return plaintext, warn (you may want to treat as error)
       console.warn('issueRefreshToken did not return plaintext token', rtResult);
     }
-    return res.json({ accessToken });
+    return res.json({ message: 'Login successful' });
   } catch (err) {
     return next(err);
   }
@@ -153,16 +149,10 @@ exports.refresh = async (req, res, next) => {
     // rotateRefreshToken returns { accessToken, refreshToken }
     const { accessToken, refreshToken: newRefreshPlain } = await tokenService.rotateRefreshToken({ currentToken });
 
-    // set new refresh token cookie (controller is responsible for cookie now)
-    res.cookie(REFRESH_COOKIE_NAME, newRefreshPlain, {
-      httpOnly: true,
-      secure: process.env.COOKIE_SECURE === 'true',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: REFRESH_EXPIRES_SEC * 1000,
-    });
+    res.cookie(ACCESS_COOKIE_NAME, accessToken, { ...COOKIE_OPTS, maxAge: ACCESS_EXPIRES_SEC * 1000 });
+    res.cookie(REFRESH_COOKIE_NAME, newRefreshPlain, { ...COOKIE_OPTS, maxAge: REFRESH_EXPIRES_SEC * 1000 });
 
-    return res.json({ accessToken });
+    return res.json({ message: 'Token refreshed' });
   } catch (err) {
     if (err && err.name === 'TokenError') {
       // defensive: clear cookie so client doesn't keep sending bad token
@@ -182,12 +172,8 @@ exports.logout = async (req, res, next) => {
     }
 
     // clear cookie on client
-    res.clearCookie(REFRESH_COOKIE_NAME, {
-      httpOnly: true,
-      secure: process.env.COOKIE_SECURE === 'true',
-      sameSite: 'lax',
-      path: '/',
-    });
+    res.clearCookie(ACCESS_COOKIE_NAME, COOKIE_OPTS);
+    res.clearCookie(REFRESH_COOKIE_NAME, COOKIE_OPTS);
 
     return res.status(204).send();
   } catch (err) {

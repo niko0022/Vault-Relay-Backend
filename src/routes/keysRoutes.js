@@ -5,6 +5,7 @@ const passport = require('passport');
 const auth = passport.authenticate('jwt', { session: false });
 
 router.post('/', auth, keysController.uploadKeys);
+router.get('/count', auth, keysController.getPreKeyCount);
 router.get('/:userId', auth, keysController.getPreKeyBundle);
 
 module.exports = router;

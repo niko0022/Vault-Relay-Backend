@@ -32,6 +32,7 @@ model User {
   identityKey          IdentityKey?
   signedPreKey         SignedPreKey?
   oneTimePreKeys       OneTimePreKey[]
+  kyberPreKey          KyberPreKey?
 }
 
 model Conversation {
@@ -166,6 +167,16 @@ model OneTimePreKey {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, keyId]) // Ensure keyIds are unique per user
+}
+
+model KyberPreKey {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  keyId     Int
+  publicKey String   // Base64
+  signature String   // Base64
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 enum ConversationType {

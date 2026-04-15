@@ -25,6 +25,7 @@ exports.getMe = async (req, res, next) => {
         status: true,
         lastSeen: true,
         createdAt: true,
+        friendCode: true,
       },
     });
 

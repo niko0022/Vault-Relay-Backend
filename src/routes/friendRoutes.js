@@ -1,7 +1,7 @@
 const route = require('express').Router();
 const passport = require('passport');
 const { param, body } = require('express-validator');
-const friendController = require('../controllers/FriendController'); 
+const friendController = require('../controllers/friendController');
 const auth = passport.authenticate('jwt', { session: false });
 
 // List friends (for current user)
@@ -9,6 +9,20 @@ route.get(
   '/',
   auth,
   friendController.listFriends
+);
+
+// List incoming pending friend requests
+route.get(
+  '/pending',
+  auth,
+  friendController.listPendingRequests
+);
+
+// List blocked users
+route.get(
+  '/blocked',
+  auth,
+  friendController.listBlockedUsers
 );
 
 // Create / send friend request (by friendCode in body)
@@ -21,6 +35,16 @@ route.post(
   friendController.addFriend
 );
 
+// Remove / unfriend (friendshipId in path)
+route.delete(
+  '/:friendshipId',
+  auth,
+  [
+    param('friendshipId').isUUID().withMessage('friendshipId must be a valid UUID'),
+  ],
+  friendController.removeFriend
+);
+
 // Accept a friend request (friendshipId in path)
 route.post(
   '/:friendshipId/accept',
@@ -28,7 +52,7 @@ route.post(
   [
     param('friendshipId').isUUID().withMessage('friendshipId must be a valid UUID'),
   ],
-  friendController.acceptFriend 
+  friendController.acceptFriend
 );
 
 // Decline a friend request
@@ -39,6 +63,16 @@ route.post(
     param('friendshipId').isUUID().withMessage('friendshipId must be a valid UUID'),
   ],
   friendController.declineFriend
+);
+
+// Cancel an outgoing friend request (sender cancels their own request)
+route.post(
+  '/:friendshipId/cancel',
+  auth,
+  [
+    param('friendshipId').isUUID().withMessage('friendshipId must be a valid UUID'),
+  ],
+  friendController.cancelFriendRequest
 );
 
 // Block a user (target user's id in path)

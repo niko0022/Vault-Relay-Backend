@@ -6,6 +6,7 @@ const auth = passport.authenticate('jwt', { session: false });
 
 router.post('/', auth, keysController.uploadKeys);
 router.get('/count', auth, keysController.getPreKeyCount);
+router.post('/batch', auth, keysController.getPreKeyBundles);
 router.get('/:userId', auth, keysController.getPreKeyBundle);
 
 module.exports = router;

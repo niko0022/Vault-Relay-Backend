@@ -30,3 +30,16 @@ exports.getPreKeyCount = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getPreKeyBundles = async (req, res, next) => {
+  try {
+    const { userIds } = req.body;
+    if (!Array.isArray(userIds)) {
+      return res.status(400).json({ message: 'userIds must be an array' });
+    }
+    const bundles = await keyService.getPreKeyBundles(userIds);
+    return res.json({ bundles });
+  } catch (err) {
+    next(err);
+  }
+};

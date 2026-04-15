@@ -75,6 +75,7 @@ model Friendship {
   requesterId String
   addresseeId String
   status      FriendshipStatus @default(PENDING)
+  blockedById String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   acceptedAt   DateTime?

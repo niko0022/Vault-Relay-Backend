@@ -111,11 +111,80 @@ async function getPreKeyBundle(targetUserId) {
   });
 }
 
-async function getPreKeyCount(userId) {
-  const count = await prisma.oneTimePreKey.count({
-    where: { userId }
+async function getPreKeyBundles(targetUserIds) {
+  return prisma.$transaction(async (tx) => {
+    // 1. Fetch all root keys for the requested users
+    const identities = await tx.identityKey.findMany({ where: { userId: { in: targetUserIds } } });
+    const signedPreKeys = await tx.signedPreKey.findMany({ where: { userId: { in: targetUserIds } } });
+    const kyberPreKeys = await tx.kyberPreKey.findMany({ where: { userId: { in: targetUserIds } } });
+
+    // Map them for O(1) lookup
+    const idMap = new Map(identities.map(i => [i.userId, i]));
+    const spkMap = new Map(signedPreKeys.map(s => [s.userId, s]));
+    const kpkMap = new Map(kyberPreKeys.map(k => [k.userId, k]));
+
+    // 2. Fetch the oldest OneTimePreKey for EACH user. 
+    // Prisma does not have a "findFirst for each in array" so we fetch all and manually filter
+    const allOneTimeKeys = await tx.oneTimePreKey.findMany({
+      where: { userId: { in: targetUserIds } },
+      orderBy: { keyId: 'asc' }
+    });
+
+    const otkMap = new Map();
+    const toDeleteIds = [];
+    
+    // Grab only the first one encountered per user (since they're ordered ASC by keyId)
+    for (const otk of allOneTimeKeys) {
+      if (!otkMap.has(otk.userId)) {
+        otkMap.set(otk.userId, otk);
+        toDeleteIds.push(otk.id);
+      }
+    }
+
+    if (toDeleteIds.length > 0) {
+      await tx.oneTimePreKey.deleteMany({ where: { id: { in: toDeleteIds } } });
+    }
+
+    // 3. Assemble and return the array of bundles
+    const validBundles = [];
+    for (const userId of targetUserIds) {
+      const identity = idMap.get(userId);
+      const signedPreKey = spkMap.get(userId);
+      const kyberPreKey = kpkMap.get(userId);
+
+      // Only return a bundle if they have fully set up E2EE keys
+      if (identity && signedPreKey && kyberPreKey) {
+        const oneTimePreKey = otkMap.get(userId);
+        validBundles.push({
+          userId: userId,
+          registrationId: identity.registrationId,
+          identityKey: identity.publicKey,
+          signedPreKey: {
+            keyId: signedPreKey.keyId,
+            publicKey: signedPreKey.publicKey,
+            signature: signedPreKey.signature
+          },
+          kyberPreKey: {
+            keyId: kyberPreKey.keyId,
+            publicKey: kyberPreKey.publicKey,
+            signature: kyberPreKey.signature
+          },
+          oneTimePreKey: oneTimePreKey ? {
+            keyId: oneTimePreKey.keyId,
+            publicKey: oneTimePreKey.publicKey
+          } : null
+        });
+      }
+    }
+
+    return validBundles;
   });
-  return count;
 }
 
-module.exports = { uploadKeys, getPreKeyBundle, getPreKeyCount };
+function getPreKeyCount(userId) {
+  return prisma.oneTimePreKey.count({
+    where: { userId }
+  });
+}
+
+module.exports = { uploadKeys, getPreKeyBundle, getPreKeyBundles, getPreKeyCount };

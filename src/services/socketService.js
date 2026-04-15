@@ -121,6 +121,19 @@ function registerHandlers(io, socket) {
           type: content.type,
           body: Buffer.from(bodyBytes).toString('base64')
         });
+      } else if (contentType === 'SIGNAL_KEY_DISTRIBUTION' && typeof content === 'object') {
+        const encodedMap = {};
+        for (const [uid, encBlob] of Object.entries(content)) {
+          if (typeof encBlob === 'string') {
+            encodedMap[uid] = encBlob;
+          } else {
+             const bodyBytes = encBlob.body instanceof Uint8Array
+               ? encBlob.body
+               : new Uint8Array(Object.values(encBlob.body));
+             encodedMap[uid] = { type: encBlob.type, body: Buffer.from(bodyBytes).toString('base64') };
+          }
+        }
+        contentString = JSON.stringify(encodedMap);
       }
 
       const result = await MessageService.createMessage({

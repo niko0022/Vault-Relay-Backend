@@ -2,12 +2,12 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const createAdapter = require('@socket.io/redis-adapter');
 const Redis = require('ioredis');
-const SocketService = require('./services/socketService'); 
+const SocketService = require('./services/socketService');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
 
 const rateLimiter = new RateLimiterMemory({
-    points: 10, 
-    duration: 1, 
+    points: 10,
+    duration: 1,
 });
 
 let io;
@@ -21,7 +21,7 @@ function initializeSocketServer(httpServer) {
         path: '/socket.io',
         cors: {
             origin: process.env.CORS_ORIGIN,
-            credentials: true 
+            credentials: true
         },
         maxHttpBufferSize: 1e6,
     });
@@ -37,16 +37,27 @@ function initializeSocketServer(httpServer) {
 
     io.use(async (socket, next) => {
         try {
-            const token = socket.handshake.auth?.token;
+            // Try reading token from cookie (new secure standard)
+            let token = null;
+            const cookieString = socket.handshake.headers?.cookie;
+
+            if (cookieString) {
+                // Manually parse since cookie-parser middleware doesn't run on raw sockets
+                const cookies = Object.fromEntries(
+                    cookieString.split('; ').map(c => c.split('='))
+                );
+                token = cookies['accessToken'];
+            }
+
             if (!token) {
                 return next(new Error('Authentication error: Token missing'));
             }
 
             const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
-            
+
             const payload = jwt.verify(token, ACCESS_SECRET);
-            
-            socket.user = { id: payload.sub, ...payload }; 
+
+            socket.user = { id: payload.sub, ...payload };
 
             await SocketService.attachSocket(io, socket);
 
@@ -54,7 +65,7 @@ function initializeSocketServer(httpServer) {
         } catch (err) {
             if (err.name === 'TokenExpiredError') {
                 const error = new Error('Authentication error: Token expired');
-                error.data = { code: 'TOKEN_EXPIRED' }; 
+                error.data = { code: 'TOKEN_EXPIRED' };
                 return next(error);
             }
             console.error("Socket Auth Error:", err.message);

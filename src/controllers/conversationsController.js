@@ -137,10 +137,18 @@ exports.listConversations = async (req, res, next) => {
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       include: {
-        // Fetch the unread count directly from this user's Participant row
+        // Include participant user data for DIRECT chat display
+        participantA: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
+        participantB: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
+        // Fetch the unread count from this user's Participant row
+        // AND all participants with user info for GROUP chats
         participants: {
-          where: { userId },
-          select: { unreadCount: true }
+          select: {
+            userId: true,
+            role: true,
+            unreadCount: true,
+            user: { select: { id: true, displayName: true, username: true, avatarUrl: true } }
+          }
         },
         // Fetch only the single latest message that isn't a KEY_DISTRIBUTION
         messages: {
@@ -167,12 +175,12 @@ exports.listConversations = async (req, res, next) => {
 
     // Map Prisma includes to the exact shape the frontend expects
     const enriched = page.map((conv) => {
-      const p = conv.participants[0];
-      const unreadCount = p ? p.unreadCount : 0;
+      const myParticipant = conv.participants.find(p => p.userId === userId);
+      const unreadCount = myParticipant ? myParticipant.unreadCount : 0;
       const lastMessage = conv.messages.length > 0 ? conv.messages[0] : null;
 
-      // Clean up the object to avoid sending the nested arrays
-      const { participants, messages, ...rest } = conv;
+      // Clean up internal arrays but keep structured data
+      const { messages, ...rest } = conv;
 
       return {
         ...rest,
@@ -199,9 +207,15 @@ exports.getConversation = async (req, res, next) => {
     const conv = await prisma.conversation.findUnique({ 
       where: { id: convId },
       include: {
+        participantA: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
+        participantB: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
         participants: {
-          where: { userId },
-          select: { unreadCount: true }
+          select: {
+            userId: true,
+            role: true,
+            unreadCount: true,
+            user: { select: { id: true, displayName: true, username: true, avatarUrl: true } }
+          }
         },
         messages: {
           where: { contentType: { not: 'SIGNAL_KEY_DISTRIBUTION' } },
@@ -225,15 +239,15 @@ exports.getConversation = async (req, res, next) => {
     
     if (!conv) return res.status(404).json({ message: 'Conversation not found' });
 
-    // Since we included participants where userId matches, we can use that to check membership
-    const isParticipant = conv.participants.length > 0;
-    if (!isParticipant) return res.status(403).json({ message: 'Forbidden' });
+    // Check membership via participants array
+    const myParticipant = conv.participants.find(p => p.userId === userId);
+    if (!myParticipant) return res.status(403).json({ message: 'Forbidden' });
 
     const lastMessage = conv.messages.length > 0 ? conv.messages[0] : null;
-    const unreadCount = conv.participants[0].unreadCount;
+    const unreadCount = myParticipant.unreadCount;
 
-    // Clean up the object to match frontend expectations
-    const { participants, messages, ...rest } = conv;
+    // Clean up internal arrays but keep structured data
+    const { messages, ...rest } = conv;
 
     return res.json({
       conversation: rest,

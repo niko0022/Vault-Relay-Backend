@@ -155,6 +155,130 @@ exports.listFriends = async (req, res, next) => {
   }
 };
 
+exports.listBlockedUsers = async (req, res, next) => {
+  try {
+    const meId = req.user?.id;
+    if (!meId) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const blocked = await prisma.friendship.findMany({
+      where: {
+        status: 'BLOCKED',
+        blockedById: meId,
+        OR: [
+          { requesterId: meId },
+          { addresseeId: meId },
+        ],
+      },
+      include: {
+        requester: {
+          select: { id: true, displayName: true, username: true, avatarUrl: true },
+        },
+        addressee: {
+          select: { id: true, displayName: true, username: true, avatarUrl: true },
+        },
+      },
+    });
+
+    const blockedList = blocked.map((f) => {
+      const otherUser = f.requesterId === meId ? f.addressee : f.requester;
+      return {
+        friendshipId: f.id,
+        user: otherUser,
+        blockedAt: f.updatedAt,
+      };
+    });
+
+    return res.status(200).json({ count: blockedList.length, blocked: blockedList });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.listPendingRequests = async (req, res, next) => {
+  try {
+    const meId = req.user?.id;
+    if (!meId) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const pending = await prisma.friendship.findMany({
+      where: {
+        addresseeId: meId,
+        status: 'PENDING',
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        requester: {
+          select: {
+            id: true,
+            displayName: true,
+            username: true,
+            friendCode: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+
+    const requests = pending.map((f) => ({
+      friendshipId: f.id,
+      user: f.requester,
+      sentAt: f.createdAt,
+    }));
+
+    return res.status(200).json({ count: requests.length, requests });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+exports.removeFriend = async (req, res, next) => {
+  try {
+    const meId = req.user?.id;
+    if (!meId) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const friendshipId = req.params.friendshipId;
+    if (!friendshipId) {
+      return res.status(400).json({ message: 'friendshipId is required' });
+    }
+
+    const friendship = await prisma.friendship.findUnique({
+      where: { id: friendshipId },
+    });
+    if (!friendship) {
+      return res.status(404).json({ message: 'Friendship not found' });
+    }
+
+    // Only participants of this friendship can remove it
+    if (friendship.requesterId !== meId && friendship.addresseeId !== meId) {
+      return res.status(403).json({ message: 'Not authorized to remove this friendship' });
+    }
+
+    if (friendship.status !== 'ACCEPTED') {
+      return res.status(400).json({ message: 'Can only remove accepted friendships' });
+    }
+
+    await prisma.friendship.delete({
+      where: { id: friendshipId },
+    });
+
+    // Notify the other user in real-time
+    const otherUserId = friendship.requesterId === meId ? friendship.addresseeId : friendship.requesterId;
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user:${otherUserId}`).emit('friendHandler.removed', { friendshipId });
+    }
+
+    return res.status(200).json({ message: 'Friend removed successfully' });
+  } catch (err) {
+    return next(err);
+  }
+};
+
 exports.acceptFriend = async (req, res, next) => {
   try {
 

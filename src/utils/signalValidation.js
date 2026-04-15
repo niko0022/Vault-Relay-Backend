@@ -29,6 +29,24 @@ function validateSignalPayload(content, contentType) {
     } else {
       throw new Error('Security Error: Encrypted content format unrecognized');
     }
+  } else if (contentType === 'SIGNAL_KEY_DISTRIBUTION') {
+    // Validate object map: { [userId]: { type: number, body: Uint8Array | Array | String } }
+    if (typeof content !== 'object' || content === null) {
+      throw new Error('Security Error: Key distribution content must be an object map of userIds to encrypted blobs');
+    }
+    for (const [userId, encBlob] of Object.entries(content)) {
+      if (typeof encBlob === 'string') {
+        if (!isBase64(encBlob)) {
+           throw new Error(`Security Error: Key distribution blob for user ${userId} must be a valid Base64 string`);
+        }
+      } else if (typeof encBlob === 'object' && encBlob !== null) {
+        if (typeof encBlob.type !== 'number' || !encBlob.body) {
+          throw new Error(`Security Error: Key distribution blob for user ${userId} must have {type: number, body: [...]} structure`);
+        }
+      } else {
+         throw new Error(`Security Error: Unrecognized key distribution format for user ${userId}`);
+      }
+    }
   }
 }
 

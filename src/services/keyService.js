@@ -181,10 +181,19 @@ async function getPreKeyBundles(targetUserIds) {
   });
 }
 
-function getPreKeyCount(userId) {
-  return prisma.oneTimePreKey.count({
-    where: { userId }
-  });
+async function getPreKeyCount(userId) {
+  const [count, identity] = await prisma.$transaction([
+    prisma.oneTimePreKey.count({ where: { userId } }),
+    prisma.identityKey.findUnique({
+      where: { userId },
+      select: { registrationId: true }
+    })
+  ]);
+
+  return {
+    count,
+    registrationId: identity?.registrationId || null
+  };
 }
 
 module.exports = { uploadKeys, getPreKeyBundle, getPreKeyBundles, getPreKeyCount };

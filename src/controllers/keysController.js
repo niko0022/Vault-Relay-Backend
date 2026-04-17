@@ -24,8 +24,8 @@ exports.getPreKeyBundle = async (req, res, next) => {
 exports.getPreKeyCount = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const count = await keyService.getPreKeyCount(userId);
-    return res.json({ count });
+    const status = await keyService.getPreKeyCount(userId);
+    return res.json(status);
   } catch (err) {
     next(err);
   }

@@ -109,31 +109,13 @@ function registerHandlers(io, socket) {
 
       validateSignalPayload(content, contentType);  
 
-      // Convert WASM bridge binary payload to a clean JSON string for the DB.
-      // The body is a Uint8Array which JSON.stringify would corrupt into {"0":72,"1":101,...},
-      // so we Base64-encode it first for compact, lossless storage.
+      // The frontend always sends body as a Base64 string.
+      // Just JSON.stringify the { type, body } object directly for DB storage.
       let contentString = content;
       if (contentType === 'SIGNAL_ENCRYPTED' && typeof content === 'object') {
-        const bodyBytes = content.body instanceof Uint8Array
-          ? content.body
-          : new Uint8Array(Object.values(content.body));
-        contentString = JSON.stringify({
-          type: content.type,
-          body: Buffer.from(bodyBytes).toString('base64')
-        });
+        contentString = JSON.stringify({ type: content.type, body: content.body });
       } else if (contentType === 'SIGNAL_KEY_DISTRIBUTION' && typeof content === 'object') {
-        const encodedMap = {};
-        for (const [uid, encBlob] of Object.entries(content)) {
-          if (typeof encBlob === 'string') {
-            encodedMap[uid] = encBlob;
-          } else {
-             const bodyBytes = encBlob.body instanceof Uint8Array
-               ? encBlob.body
-               : new Uint8Array(Object.values(encBlob.body));
-             encodedMap[uid] = { type: encBlob.type, body: Buffer.from(bodyBytes).toString('base64') };
-          }
-        }
-        contentString = JSON.stringify(encodedMap);
+        contentString = JSON.stringify(content);
       }
 
       const result = await MessageService.createMessage({
@@ -175,16 +157,10 @@ function registerHandlers(io, socket) {
       const userId = socket.user.id;
       const { messageId, content } = data;
 
-      // Same Base64 encoding as send_message for edited encrypted content
+      // The frontend always sends body as a Base64 string — JSON.stringify directly.
       let contentString = content;
       if (typeof content === 'object') {
-        const bodyBytes = content.body instanceof Uint8Array
-          ? content.body
-          : new Uint8Array(Object.values(content.body));
-        contentString = JSON.stringify({
-          type: content.type,
-          body: Buffer.from(bodyBytes).toString('base64')
-        });
+        contentString = JSON.stringify({ type: content.type, body: content.body });
       }
 
       // Call Service

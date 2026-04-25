@@ -4,11 +4,20 @@ async function uploadKeys(userId, { registrationId, identityKey, signedPreKey, k
   return prisma.$transaction(async (tx) => {
 
     if (identityKey) {
+      const existingIdentity = await tx.identityKey.findUnique({ where: { userId } });
+      
       await tx.identityKey.upsert({
         where: { userId },
         update: { publicKey: identityKey, registrationId },
         create: { userId, publicKey: identityKey, registrationId }
       });
+
+      // If the identity key or registration ID changed (meaning the user cleared their browser/re-installed),
+      // their old OneTimePreKeys are mathematically useless and share the same keyIds (0-99). 
+      // We MUST delete them, otherwise the new keys won't upload due to ID collisions.
+      if (existingIdentity && (existingIdentity.publicKey !== identityKey || existingIdentity.registrationId !== registrationId)) {
+        await tx.oneTimePreKey.deleteMany({ where: { userId } });
+      }
     }
 
     if (signedPreKey) {

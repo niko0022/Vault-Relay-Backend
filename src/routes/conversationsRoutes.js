@@ -11,7 +11,7 @@ router.post(
   '/',
   auth,
   [ body('participantId').isString().notEmpty().withMessage('participantId required') ],
-  convController.getOrCreateConversation
+  convController.createConversation
 );
 
 router.get(

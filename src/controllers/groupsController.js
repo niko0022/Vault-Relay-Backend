@@ -20,7 +20,7 @@ exports.createGroup = async (req, res, next) => {
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
     const ownerId = req.user.id;
-    const { title, participantIds = [], avatarUrl } = req.body;
+    const { title, participantIds = [], avatarUrl, memberCanInvite = true } = req.body;
 
     // Dedupe and ensure owner included
     const uniqueIds = Array.from(new Set([ownerId, ...(participantIds || [])]));
@@ -38,6 +38,7 @@ exports.createGroup = async (req, res, next) => {
           type: 'GROUP',
           title: title || null,
           avatarUrl: avatarUrl || null,
+          memberCanInvite,
           participants: {
             create: uniqueIds.map((uid) => ({
               userId: uid,
@@ -78,14 +79,24 @@ exports.addParticipant = async (req, res, next) => {
     // 1. SIGNAL REQUIREMENT: Check if the NEW user has keys
     await validateSignalKeys([userId]);
 
-    // Check conv exists and actor is admin
+    // Check conv exists, get the restricted setting, and check actor's role
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: convId },
+      select: { memberCanInvite: true }
+    });
+    
+    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+
     const participantActor = await prisma.participant.findUnique({
       where: { conversationId_userId: { conversationId: convId, userId: actorId } },
       select: { role: true },
     });
     
-    if (!participantActor) return res.status(403).json({ message: 'Forbidden' });
-    if (participantActor.role !== 'ADMIN') return res.status(403).json({ message: 'Only admins can add participants' });
+    if (!participantActor) return res.status(403).json({ message: 'Forbidden: You are not in this group' });
+    
+    if (participantActor.role !== 'ADMIN' && conversation.memberCanInvite === false) {
+       return res.status(403).json({ message: 'Forbidden: Only group admins can invite new users to this restricted group.' });
+    }
 
     // Create participant (ignore if already exists)
     const created = await prisma.participant.createMany({

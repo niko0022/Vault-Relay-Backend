@@ -57,14 +57,12 @@ exports.createConversation = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io) {
-       // Safely emit to the other user so their UI updates in real-time
-       // but only if it's newly created. To be safe, emit the returned conversation so both get it.
-       // The frontend should ignore if it already has it.
+       // Emit to both users so their UI instantly shows the new chat window in real-time
        io.to(`user:${a}`).emit('conversation.created', { conversation: conv });
        io.to(`user:${b}`).emit('conversation.created', { conversation: conv });
     }
 
-    return res.json({ conversation: conv });
+    return res.status(201).json(conv);
   } catch (err) {
     next(err);
   }

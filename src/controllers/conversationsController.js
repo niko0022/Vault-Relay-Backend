@@ -6,7 +6,7 @@ function orderPair(a, b) {
   return a < b ? [a, b] : [b, a];
 }
 
-exports.getOrCreateConversation = async (req, res, next) => {
+exports.createConversation = async (req, res, next) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -28,40 +28,36 @@ exports.getOrCreateConversation = async (req, res, next) => {
 
     const [a, b] = orderPair(userId, otherId);
 
-    // Try to find existing conversation (ordered pair)
-    let conv = await prisma.conversation.findUnique({
+    // Explicitly prevent recreating an existing direct conversation
+    const existingConv = await prisma.conversation.findUnique({
       where: { participantAId_participantBId: { participantAId: a, participantBId: b } },
     });
 
-    if (!conv) {
-      try {
-        conv = await prisma.$transaction(async (tx) => {
-          const created = await tx.conversation.create({
-            data: {
-              type: 'DIRECT',
-              participantAId: a,
-              participantBId: b,
-              participants: {
-                create: [
-                  { userId: a, role: 'MEMBER' },
-                  { userId: b, role: 'MEMBER' },
-                ],
-              },
-            },
-          });
-          return created;
-        });
-      } catch (err) {
-        conv = await prisma.conversation.findUnique({
-          where: { participantAId_participantBId: { participantAId: a, participantBId: b } },
-        });
-        if (!conv) throw err;
-      }
+    if (existingConv) {
+      return res.status(409).json({ 
+        message: 'A conversation already exists with this user.',
+        conversationId: existingConv.id
+      });
     }
+
+    // Create the new conversation
+    const conv = await prisma.conversation.create({
+      data: {
+        type: 'DIRECT',
+        participantAId: a,
+        participantBId: b,
+        participants: {
+          create: [
+            { userId: a, role: 'MEMBER' },
+            { userId: b, role: 'MEMBER' },
+          ],
+        },
+      },
+    });
 
     const io = req.app.get('io');
     if (io) {
-       // getOrCreate is often called to start a new chat. We can emit conversation.created 
+       // Safely emit to the other user so their UI updates in real-time
        // but only if it's newly created. To be safe, emit the returned conversation so both get it.
        // The frontend should ignore if it already has it.
        io.to(`user:${a}`).emit('conversation.created', { conversation: conv });
@@ -298,7 +294,10 @@ exports.deleteConversation = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
       conversation.participants.forEach(p => {
-         io.to(`user:${p.userId}`).emit('conversation.deleted', { conversationId: id });
+         io.to(`user:${p.userId}`).emit('conversation.deleted', { 
+            conversationId: id,
+            participants: conversation.participants
+         });
       });
     }
 

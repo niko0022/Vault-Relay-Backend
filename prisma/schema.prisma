@@ -42,6 +42,7 @@ model Conversation {
   avatarUrl      String?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
+  memberCanInvite Boolean         @default(true) // Whether regular MEMBERs can invite others
   lastMessageId  String?
   participantAId String?
   participantBId String?

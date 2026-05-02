@@ -62,7 +62,7 @@ exports.createConversation = async (req, res, next) => {
        io.to(`user:${b}`).emit('conversation.created', { conversation: conv });
     }
 
-    return res.status(201).json(conv);
+    return res.status(201).json({ conversation: conv });
   } catch (err) {
     next(err);
   }

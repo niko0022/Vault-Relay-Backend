@@ -9,7 +9,12 @@ async function cleanupReadMessages() {
             where: {
                 contentType: {
                     in: ['SIGNAL_ENCRYPTED', 'SIGNAL_KEY_DISTRIBUTION']
-                }
+                },
+                // Skip messages edited within the last 48 hours — new ciphertext may not be re-read yet
+                OR: [
+                    { editedAt: null },
+                    { editedAt: { lt: new Date(Date.now() - 48 * 60 * 60 * 1000) } }
+                ]
             },
             select: {
                 id: true,
@@ -53,11 +58,11 @@ async function cleanupReadMessages() {
 }
 
 function initializeCronJobs() {
-    // Run every 2 hours for testing purposes
-    cron.schedule('0 */2 * * *', () => {
+    // Run every 48 hours in production
+    cron.schedule('0 0 */2 * *', () => {
         cleanupReadMessages();
     });
-    console.log('Cron jobs initialized: Message Cleanup scheduled (Runs every 2 hours).');
+    console.log('Cron jobs initialized: Message Cleanup scheduled (Runs every 48 hours).');
 }
 
 module.exports = {

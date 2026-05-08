@@ -165,6 +165,12 @@ async function editMessage(messageId, userId, newContent) {
     if (!message) throw new Error('Message not found');
     if (message.senderId !== userId) throw new Error('Forbidden: You can only edit your own messages');
 
+    // 48-hour edit window enforcement
+    const EDIT_WINDOW_MS = 48 * 60 * 60 * 1000;
+    if (Date.now() - new Date(message.createdAt).getTime() > EDIT_WINDOW_MS) {
+        throw new Error('Forbidden: Edit window has expired (48 hours)');
+    }
+
     const updatedMessage = await prisma.message.update({
         where: { id: messageId },
         data: { 

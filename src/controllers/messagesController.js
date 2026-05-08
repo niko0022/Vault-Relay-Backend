@@ -20,7 +20,7 @@ exports.getMessages = async (req, res, next) => {
 
     if (!isParticipant) return res.status(403).json({ message: 'Forbidden' });
 
-    const parsed = parseCursorParam(cursorRaw); 
+    const parsed = parseCursorParam(cursorRaw);
     let whereCursor = undefined;
 
     if (parsed && parsed.createdAt) {
@@ -38,7 +38,7 @@ exports.getMessages = async (req, res, next) => {
     const messages = await prisma.message.findMany({
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1, 
+      take: limit + 1,
       select: {
         id: true,
         content: true,
@@ -53,7 +53,40 @@ exports.getMessages = async (req, res, next) => {
     });
 
     const hasNext = messages.length > limit;
-    const page = messages.slice(0, limit).reverse(); 
+    let page = messages.slice(0, limit).reverse();
+
+    // For GROUP conversations, inject the latest SIGNAL_KEY_DISTRIBUTION message
+    // from every sender. This guarantees that late joiners (or clients that cleared
+    // their cache) always receive the Sender Key needed to decrypt the history.
+    if (conv.type === 'GROUP') {
+      try {
+        const latestSkdms = await prisma.message.findMany({
+          where: {
+            conversationId: convId,
+            contentType: 'SIGNAL_KEY_DISTRIBUTION'
+          },
+          distinct: ['senderId'],
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            content: true,
+            contentType: true,
+            senderId: true,
+            createdAt: true
+          }
+        });
+
+        // Only inject keys that aren't already in the page
+        const existingIds = new Set(page.map(m => m.id));
+        const keysToInject = latestSkdms.filter(k => !existingIds.has(k.id));
+        if (keysToInject.length > 0) {
+          page = [...keysToInject, ...page];
+        }
+      } catch (skdmErr) {
+        console.error('[Signal] Failed to inject SKDMs:', skdmErr);
+        // Non-fatal — continue with the original page
+      }
+    }
 
     const nextCursor = hasNext
       ? makeCursorToken({ id: messages[limit - 1].id, createdAt: messages[limit - 1].createdAt })
@@ -89,21 +122,19 @@ exports.sendMessage = async (req, res, next) => {
     // Socket Emissions
     const io = req.app.get('io');
     if (io) {
-        io.to(`conv:${convId}`).emit('message', { message: result.message });
-        if (!isKeyDistribution) {
-            const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
-            
-            result.recipients.forEach(uid => {
-                io.to(`user:${uid}`).emit('conversation.updated', {
-                    conversationId: convId,
-                    // Note: 'lastMessage.content' will be Ciphertext. 
-                    // The Frontend must decrypt this to show a preview.
-                    lastMessage: result.message,
-                    unreadCount: unreadMap.get(uid),
-                    updatedAt: new Date().toISOString()
-                });
-            });
-        }
+      io.to(`conv:${convId}`).emit('message', { message: result.message });
+      if (!isKeyDistribution) {
+        const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
+
+        result.recipients.forEach(uid => {
+          io.to(`user:${uid}`).emit('conversation.updated', {
+            conversationId: convId,
+            lastMessage: result.message,
+            unreadCount: unreadMap.get(uid),
+            updatedAt: new Date().toISOString()
+          });
+        });
+      }
     }
 
     return res.status(201).json(result.message);
@@ -132,13 +163,11 @@ exports.markRead = async (req, res, next) => {
     const io = req.app.get('io');
     if (io && result.marked > 0) {
       // Notify the user who read it (to clear their badge)
-      io.to(`user:${userId}`).emit('conversation.updated', { 
-        conversationId: convId, 
-        unreadCount: result.newUnreadCount 
+      io.to(`user:${userId}`).emit('conversation.updated', {
+        conversationId: convId,
+        unreadCount: result.newUnreadCount
       });
-      
-      // Notify the room (so sender sees "Read by X")
-      // FIX: Ensure consistency with 'conv:' prefix
+
       io.to(`conv:${convId}`).emit('messages.read', {
         conversationId: convId,
         userId,
@@ -160,22 +189,22 @@ exports.editMessage = async (req, res, next) => {
     const { messageId } = req.params;
     const userId = req.user.id;
     // In Signal, 'content' here is the NEW Ciphertext
-    const { content } = req.body; 
+    const { content } = req.body;
 
     const { message, participants } = await MessageService.editMessage(messageId, userId, content);
 
-    const io = req.app.get('io'); 
+    const io = req.app.get('io');
     if (io) {
-        // FIX: Added 'conv:' prefix. 
-        // Previously: io.to(message.conversationId) <- THIS WOULD FAIL
-        io.to(`conv:${message.conversationId}`).emit('message:edited', message);
+      // FIX: Added 'conv:' prefix. 
+      // Previously: io.to(message.conversationId) <- THIS WOULD FAIL
+      io.to(`conv:${message.conversationId}`).emit('message:edited', message);
 
-        participants.forEach(participantId => {
-            io.to(`user:${participantId}`).emit('conversation.updated', {
-                conversationId: message.conversationId,
-                lastMessage: message // Frontend must decrypt this new content
-            });
+      participants.forEach(participantId => {
+        io.to(`user:${participantId}`).emit('conversation.updated', {
+          conversationId: message.conversationId,
+          lastMessage: message // Frontend must decrypt this new content
         });
+      });
     }
 
     return res.status(200).json(message);
@@ -194,22 +223,18 @@ exports.deleteMessage = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io) {
-        io.to(`conv:${conversationId}`).emit('message:deleted', { id: deletedId, conversationId });
+      io.to(`conv:${conversationId}`).emit('message:deleted', { id: deletedId, conversationId });
 
-        participants.forEach(participantId => {
-             io.to(`user:${participantId}`).emit('conversation.updated', {
-                conversationId: conversationId,
-                // Even though the message is deleted, we update the preview.
-                // You might want to let the frontend handle the string "Message deleted"
-                // based on language settings, but this is fine for now.
-                lastMessage: { 
-                    id: deletedId, 
-                    content: 'Message deleted', 
-                    deleted: true, // Signal frontend needs this flag
-                    createdAt: new Date() 
-                } 
-            });
+      participants.forEach(participantId => {
+        io.to(`user:${participantId}`).emit('conversation.updated', {
+          conversationId: conversationId,
+          lastMessage: {
+            id: deletedId,
+            deleted: true, // Signal frontend needs this flag
+            createdAt: new Date()
+          }
         });
+      });
     }
     return res.status(200).json({ message: 'Message deleted successfully', id: deletedId });
   } catch (err) {

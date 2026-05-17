@@ -3,6 +3,7 @@ const passport = require('passport');
 const { body, query, param } = require('express-validator');
 const groupController = require('../controllers/groupsController');
 const convController = require('../controllers/conversationsController');
+const attachmentController = require('../controllers/attachmentController');
 
 const router = express.Router();
 const auth = passport.authenticate('jwt', { session: false });
@@ -10,7 +11,7 @@ const auth = passport.authenticate('jwt', { session: false });
 router.post(
   '/',
   auth,
-  [ body('participantId').isString().notEmpty().withMessage('participantId required') ],
+  [body('participantId').isString().notEmpty().withMessage('participantId required')],
   convController.createConversation
 );
 
@@ -30,8 +31,8 @@ router.post(
   '/group',
   auth,
   [
-    body('title').optional().isString().trim().isLength({ max:200}).withMessage('title exeeds max lenght of 200 characters').escape(),
-    body('participantIds').isArray({min:1,}).withMessage('pariciopants must be an non empty aray'),
+    body('title').optional().isString().trim().isLength({ max: 200 }).withMessage('title exeeds max lenght of 200 characters').escape(),
+    body('participantIds').isArray({ min: 1, }).withMessage('pariciopants must be an non empty aray'),
     body('participantIds.*').isUUID().withMessage('each participantId must be a valid UUID'),
     body('avatarUrl').optional().isString().isURL().withMessage('avatarUrl must be a valid URL')
   ],
@@ -67,9 +68,18 @@ router.get(
   groupController.listParticipants
 );
 
-router.delete('/:id', auth, 
+router.post(
+  '/:conversationId/attachment-upload-url',
+  auth,
   [
-   param('id').isUUID().withMessage('converstaion id must be a valid UUID'),
+    param('conversationId').isUUID().withMessage('conversationId must be a valid UUID'),
+  ],
+  attachmentController.getUploadUrl
+);
+
+router.delete('/:id', auth,
+  [
+    param('id').isUUID().withMessage('converstaion id must be a valid UUID'),
   ],
   convController.deleteConversation
 );

@@ -8,6 +8,21 @@ const auth = passportModule.authenticate('jwt', { session: false });
 
 router.get('/me', auth, usersController.getMe);
 
+router.patch(
+  '/me',
+  auth,
+  [
+    body('username')
+      .optional()
+      .isString()
+      .trim()
+      .matches(/^[a-zA-Z0-9_]{3,20}$/)
+      .withMessage('Username must be 3-20 characters long and can only contain letters, numbers, and underscores.'),
+    body('displayName').optional().isString().trim().isLength({ max: 50 }),
+  ],
+  usersController.updateProfile
+);
+
 router.post(
   '/me/avatar/upload-url',
   auth,

@@ -39,6 +39,11 @@ function generateAvatarKey(userId, originalName, contentType) {
   return `avatars/${userId}/${safeName}`;
 }
 
+function generateAttachmentKey(conversationId) {
+  const safeName = `${Date.now()}-${uuidv4()}.bin`;
+  return `attachments/${conversationId}/${safeName}`;
+}
+
 
 async function getPresignedUploadUrl({ userId, contentType, originalName }) {
   const key = generateAvatarKey(userId, originalName, contentType);
@@ -96,8 +101,23 @@ async function getSignedGetUrl(key, downloadName = null) {
   return getSignedUrl(s3Client, cmd, { expiresIn: SIGNED_GET_EXPIRES });
 }
 
+async function getAttachmentPresignedUrl({ conversationId }) {
+  const key = generateAttachmentKey(conversationId);
+  
+  const cmd = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ContentType: 'application/octet-stream',
+  });
+
+  const uploadUrl = await getSignedUrl(s3Client, cmd, { expiresIn: PRESIGN_EXPIRES });
+  const publicUrl = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
+  return { uploadUrl, key, publicUrl, expiresIn: PRESIGN_EXPIRES };
+}
+
 module.exports = {
   getPresignedUploadUrl,
+  getAttachmentPresignedUrl,
   putObjectBuffer,
   headObject,
   deleteObject,

@@ -21,8 +21,8 @@ exports.createConversation = async (req, res, next) => {
     });
 
     if (!recipientKeys) {
-      return res.status(400).json({ 
-        message: 'Recipient has not set up E2EE keys yet. Cannot start secure chat.' 
+      return res.status(400).json({
+        message: 'Recipient has not set up E2EE keys yet. Cannot start secure chat.'
       });
     }
 
@@ -34,7 +34,7 @@ exports.createConversation = async (req, res, next) => {
     });
 
     if (existingConv) {
-      return res.status(409).json({ 
+      return res.status(409).json({
         message: 'A conversation already exists with this user.',
         conversationId: existingConv.id
       });
@@ -57,9 +57,9 @@ exports.createConversation = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io) {
-       // Emit to both users so their UI instantly shows the new chat window in real-time
-       io.to(`user:${a}`).emit('conversation.created', { conversation: conv });
-       io.to(`user:${b}`).emit('conversation.created', { conversation: conv });
+      // Emit to both users so their UI instantly shows the new chat window in real-time
+      io.to(`user:${a}`).emit('conversation.created', { conversation: conv });
+      io.to(`user:${b}`).emit('conversation.created', { conversation: conv });
     }
 
     return res.status(201).json({ conversation: conv });
@@ -74,7 +74,7 @@ exports.listConversations = async (req, res, next) => {
     const userId = req.user.id;
     const limit = Math.min(Number(req.query.limit) || 20, 50);
     const cursorParam = req.query.cursor;
-    const parsedCursor = parseCursorParam(cursorParam); 
+    const parsedCursor = parseCursorParam(cursorParam);
 
     // Step 1: Collect conversation IDs
     const participantRows = await prisma.participant.findMany({
@@ -132,8 +132,8 @@ exports.listConversations = async (req, res, next) => {
       take: limit + 1,
       include: {
         // Include participant user data for DIRECT chat display
-        participantA: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
-        participantB: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
+        participantA: { select: { id: true, displayName: true, username: true, avatarUrl: true, status: true, lastSeen: true } },
+        participantB: { select: { id: true, displayName: true, username: true, avatarUrl: true, status: true, lastSeen: true } },
         // Fetch the unread count from this user's Participant row
         // AND all participants with user info for GROUP chats
         participants: {
@@ -141,7 +141,7 @@ exports.listConversations = async (req, res, next) => {
             userId: true,
             role: true,
             unreadCount: true,
-            user: { select: { id: true, displayName: true, username: true, avatarUrl: true } }
+            user: { select: { id: true, displayName: true, username: true, avatarUrl: true, status: true, lastSeen: true } }
           }
         },
         // Fetch only the single latest message that isn't a KEY_DISTRIBUTION
@@ -198,17 +198,17 @@ exports.getConversation = async (req, res, next) => {
     const userId = req.user.id;
     const convId = req.params.id;
 
-    const conv = await prisma.conversation.findUnique({ 
+    const conv = await prisma.conversation.findUnique({
       where: { id: convId },
       include: {
-        participantA: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
-        participantB: { select: { id: true, displayName: true, username: true, avatarUrl: true } },
+        participantA: { select: { id: true, displayName: true, username: true, avatarUrl: true, status: true, lastSeen: true } },
+        participantB: { select: { id: true, displayName: true, username: true, avatarUrl: true, status: true, lastSeen: true } },
         participants: {
           select: {
             userId: true,
             role: true,
             unreadCount: true,
-            user: { select: { id: true, displayName: true, username: true, avatarUrl: true } }
+            user: { select: { id: true, displayName: true, username: true, avatarUrl: true, status: true, lastSeen: true } }
           }
         },
         messages: {
@@ -228,9 +228,9 @@ exports.getConversation = async (req, res, next) => {
             createdAt: true
           }
         }
-      } 
+      }
     });
-    
+
     if (!conv) return res.status(404).json({ message: 'Conversation not found' });
 
     // Check membership via participants array
@@ -257,11 +257,11 @@ exports.deleteConversation = async (req, res, next) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    
+
     const conversation = await prisma.conversation.findUnique({
       where: { id },
       include: {
-        participants: true, 
+        participants: true,
       }
     });
 
@@ -272,19 +272,19 @@ exports.deleteConversation = async (req, res, next) => {
     const myParticipant = conversation.participants.find(p => p.userId === userId);
 
     if (!myParticipant) {
-      return res.status(403).json({ 
-        message: 'Forbidden: You are not a participant in this conversation.' 
+      return res.status(403).json({
+        message: 'Forbidden: You are not a participant in this conversation.'
       });
     }
 
     if (conversation.type === 'GROUP') {
       if (myParticipant.role !== 'ADMIN') {
-        return res.status(403).json({ 
-          message: 'Forbidden: Only group admins can delete this group.' 
+        return res.status(403).json({
+          message: 'Forbidden: Only group admins can delete this group.'
         });
       }
-    } 
-    
+    }
+
     await prisma.conversation.delete({
       where: { id },
     });
@@ -292,14 +292,14 @@ exports.deleteConversation = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
       conversation.participants.forEach(p => {
-         io.to(`user:${p.userId}`).emit('conversation.deleted', { 
-            conversationId: id,
-            participants: conversation.participants
-         });
+        io.to(`user:${p.userId}`).emit('conversation.deleted', {
+          conversationId: id,
+          participants: conversation.participants
+        });
       });
     }
 
-    return res.status(200).json({ 
+    return res.status(200).json({
       message: 'Conversation deleted successfully.',
       conversationId: id
     });

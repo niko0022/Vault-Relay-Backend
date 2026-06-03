@@ -46,8 +46,8 @@ model Conversation {
   lastMessageId  String?
   participantAId String?
   participantBId String?
-  participantA   User?            @relation("convA", fields: [participantAId], references: [id])
-  participantB   User?            @relation("convB", fields: [participantBId], references: [id])
+  participantA   User?            @relation("convA", fields: [participantAId], references: [id], onDelete: Cascade)
+  participantB   User?            @relation("convB", fields: [participantBId], references: [id], onDelete: Cascade)
   messages       Message[]
   participants   Participant[]
 
@@ -65,7 +65,7 @@ model Participant {
   mutedUntil     DateTime?
   unreadCount    Int             @default(0)
   conversation   Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user           User            @relation(fields: [userId], references: [id])
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, userId])
   @@index([userId])
@@ -80,8 +80,8 @@ model Friendship {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   acceptedAt   DateTime?
-  addressee    User             @relation("friendshipAddressee", fields: [addresseeId], references: [id])
-  requester   User             @relation("friendshipRequester", fields: [requesterId], references: [id])
+  addressee    User            @relation("friendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  requester   User             @relation("friendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
 
   @@unique([requesterId, addresseeId])
   @@index([addresseeId])
@@ -102,7 +102,7 @@ model Message {
   conversation   Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   replyTo        Message?           @relation("messageReplies", fields: [replyToId], references: [id])
   replies        Message[]          @relation("messageReplies")
-  sender         User               @relation("sentMessages", fields: [senderId], references: [id])
+  sender         User               @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
   receipts       MessageReceipt[]
 
   @@index([conversationId, createdAt])
@@ -115,7 +115,7 @@ model MessageReceipt {
   userId    String
   readAt    DateTime @default(now())
   message   Message  @relation(fields: [messageId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([messageId, userId])
   @@index([userId])
@@ -135,7 +135,7 @@ model RefreshToken {
   deviceId       String?
   replacedBy     RefreshToken?  @relation("tokenReplacement", fields: [replacedById], references: [id])
   replacedTokens RefreshToken[] @relation("tokenReplacement")
-  user           User           @relation(fields: [userId], references: [id])
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])

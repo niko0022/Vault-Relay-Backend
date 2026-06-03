@@ -207,3 +207,49 @@ exports.updateProfile = async (req, res, next) => {
     return next(err);
   }
 };
+
+exports.deleteAccount = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.avatarUrl) {
+      const avatarKey = extractS3KeyFromUrl(user.avatarUrl);
+      await s3Service.deleteObject(avatarKey);
+    }
+
+    const messagesWithFiles = await prisma.message.findMany({
+      where: { senderId: userId, attachmentUrl: { not: null } }
+    });
+
+    for (let msg of messagesWithFiles) {
+      const fileKey = extractS3KeyFromUrl(msg.attachmentUrl);
+      await s3Service.deleteObject(fileKey);
+    }
+
+    const friendships = await prisma.friendship.findMany({
+      where: { OR: [{ requesterId: userId }, { addresseeId: userId }] },
+      select: { id: true, requesterId: true, addresseeId: true }
+    });
+
+    await prisma.user.delete({
+      where: { id: userId }
+    });
+
+    const io = req.app.get("io");
+
+    if (io) {
+      for (let f of friendships) {
+        const friendId = f.requesterId === userId ? f.addresseeId : f.requesterId;
+        io.to(`user:${friendId}`).emit("friendHandler.removed", { friendshipId: f.id });
+      }
+    }
+
+    return res.status(200).json({ message: "Account deleted successfully" });
+  } catch (err) {
+    return next(err);
+  }
+};

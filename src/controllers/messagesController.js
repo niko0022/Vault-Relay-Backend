@@ -42,51 +42,31 @@ exports.getMessages = async (req, res, next) => {
       select: {
         id: true,
         content: true,
-        contentType: true, // Frontend needs this to know IF it should decrypt
+        contentType: true,
         senderId: true,
         attachmentUrl: true,
         replyToId: true,
         editedAt: true,
         deleted: true,
         createdAt: true,
-      },
+        sender: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true
+          }
+        },
+        receipts: {
+          select: {
+            userId: true,
+            readAt: true
+          }
+        }
+      }
     });
 
     const hasNext = messages.length > limit;
     let page = messages.slice(0, limit).reverse();
-
-    // For GROUP conversations, inject the latest SIGNAL_KEY_DISTRIBUTION message
-    // from every sender. This guarantees that late joiners (or clients that cleared
-    // their cache) always receive the Sender Key needed to decrypt the history.
-    if (conv.type === 'GROUP') {
-      try {
-        const latestSkdms = await prisma.message.findMany({
-          where: {
-            conversationId: convId,
-            contentType: 'SIGNAL_KEY_DISTRIBUTION'
-          },
-          distinct: ['senderId'],
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            content: true,
-            contentType: true,
-            senderId: true,
-            createdAt: true
-          }
-        });
-
-        // Only inject keys that aren't already in the page
-        const existingIds = new Set(page.map(m => m.id));
-        const keysToInject = latestSkdms.filter(k => !existingIds.has(k.id));
-        if (keysToInject.length > 0) {
-          page = [...keysToInject, ...page];
-        }
-      } catch (skdmErr) {
-        console.error('[Signal] Failed to inject SKDMs:', skdmErr);
-        // Non-fatal — continue with the original page
-      }
-    }
 
     const nextCursor = hasNext
       ? makeCursorToken({ id: messages[limit - 1].id, createdAt: messages[limit - 1].createdAt })
@@ -162,7 +142,6 @@ exports.markRead = async (req, res, next) => {
 
     const io = req.app.get('io');
     if (io && result.marked > 0) {
-      // Notify the user who read it (to clear their badge)
       io.to(`user:${userId}`).emit('conversation.updated', {
         conversationId: convId,
         unreadCount: result.newUnreadCount
@@ -171,7 +150,6 @@ exports.markRead = async (req, res, next) => {
       io.to(`conv:${convId}`).emit('messages.read', {
         conversationId: convId,
         userId,
-        markedCount: result.marked
       });
     }
 

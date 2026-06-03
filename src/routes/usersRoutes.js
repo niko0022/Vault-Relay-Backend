@@ -37,14 +37,22 @@ router.post(
 router.post(
   '/me/avatar/complete',
   auth,
-  [ body('key').isString().notEmpty().withMessage('key required') ],
+  [body('key').isString().notEmpty().withMessage('key required')],
   usersController.completeAvatarUpload
 );
 
 router.delete(
   '/me/avatar',
   auth,
+  [param('userId').isUUID().withMessage('invalid userId')],
   usersController.deleteAvatar
+);
+
+router.delete(
+  '/me',
+  auth,
+  [param('userId').isUUID().withMessage('invalid userId')],
+  usersController.deleteAccount
 );
 
 module.exports = router;

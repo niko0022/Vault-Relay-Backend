@@ -3,9 +3,9 @@ const { isBlocked } = require('./blockService');
 
 async function createMessage({ senderId, conversationId, content, contentType = 'TEXT', attachmentUrl, replyToId }) {
 
-    const isKeyDistribution = contentType === 'SIGNAL_KEY_DISTRIBUTION';
-    
-    if (!content && !attachmentUrl && !isKeyDistribution) {
+    const isSystemMessage = contentType === 'SIGNAL_KEY_DISTRIBUTION' || contentType === 'SIGNAL_REACTION';
+
+    if (!content && !attachmentUrl && !isSystemMessage) {
         throw new Error('Message must have content or attachment');
     }
 
@@ -41,7 +41,7 @@ async function createMessage({ senderId, conversationId, content, contentType = 
             data: {
                 senderId,
                 conversationId,
-                content: content || '', 
+                content: content || '',
                 contentType,
                 attachmentUrl: attachmentUrl || null,
                 replyToId: replyToId || null,
@@ -63,7 +63,7 @@ async function createMessage({ senderId, conversationId, content, contentType = 
 
         const recipients = participants.map((p) => p.userId).filter((id) => id !== senderId);
 
-        if (!isKeyDistribution) {
+        if (!isSystemMessage) {
             if (recipients.length > 0) {
                 await tx.participant.updateMany({
                     where: { conversationId, userId: { in: recipients } },
@@ -144,7 +144,7 @@ async function markAsRead({ userId, conversationId, lastReadMessageId = null }) 
         });
 
         let finalCount = updatedParticipant.unreadCount;
-        
+
         if (finalCount < 0) {
             finalCount = 0;
             await tx.participant.update({
@@ -173,9 +173,9 @@ async function editMessage(messageId, userId, newContent) {
 
     const updatedMessage = await prisma.message.update({
         where: { id: messageId },
-        data: { 
+        data: {
             content: newContent, // This is now the NEW ciphertext
-            editedAt: new Date() 
+            editedAt: new Date()
         },
         include: {
             sender: { select: { id: true, username: true, displayName: true, avatarUrl: true } }
@@ -187,9 +187,9 @@ async function editMessage(messageId, userId, newContent) {
         select: { userId: true }
     });
 
-    return { 
-        message: updatedMessage, 
-        participants: participants.map(p => p.userId) 
+    return {
+        message: updatedMessage,
+        participants: participants.map(p => p.userId)
     };
 }
 
@@ -205,8 +205,8 @@ async function deleteMessage(messageId, userId) {
 
     await prisma.message.delete({ where: { id: messageId } });
 
-    return { 
-        id: messageId, 
+    return {
+        id: messageId,
         conversationId: message.conversationId,
         participants: participants.map(p => p.userId)
     };

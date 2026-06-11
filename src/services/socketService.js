@@ -1,5 +1,5 @@
 const prisma = require('../db/prismaClient');
-const MessageService = require('../services/messageService'); 
+const MessageService = require('../services/messageService');
 const userSockets = new Map();
 const { validateSignalPayload } = require('../utils/signalValidation');
 
@@ -101,18 +101,20 @@ async function onDisconnect(io, socket, reason) {
 
 
 function registerHandlers(io, socket) {
-  
+
   socket.on('send_message', async (payload, ack) => {
     try {
       const senderId = socket.user.id;
       const { conversationId, content, contentType, attachmentUrl, replyToId } = payload;
 
-      validateSignalPayload(content, contentType);  
+      validateSignalPayload(content, contentType);
 
       // The frontend always sends body as a Base64 string.
       // Just JSON.stringify the { type, body } object directly for DB storage.
       let contentString = content;
       if (contentType === 'SIGNAL_ENCRYPTED' && typeof content === 'object') {
+        contentString = JSON.stringify({ type: content.type, body: content.body });
+      } else if (contentType === 'SIGNAL_REACTION' && typeof content === 'object') {
         contentString = JSON.stringify({ type: content.type, body: content.body });
       } else if (contentType === 'SIGNAL_KEY_DISTRIBUTION' && typeof content === 'object') {
         contentString = JSON.stringify(content);
@@ -132,17 +134,19 @@ function registerHandlers(io, socket) {
         message: result.message
       });
 
-      // 2. Notify recipients (Sidebar Preview Update)
-      const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
+      // 2. Notify recipients (Sidebar Preview Update) — skip for reactions
+      if (contentType !== 'SIGNAL_REACTION') {
+        const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
 
-      result.recipients.forEach(recipientId => {
-        io.to(`user:${recipientId}`).emit('conversation.updated', {
-          conversationId,
-          lastMessage: result.message,
-          unreadCount: unreadMap.get(recipientId),
-          updatedAt: new Date().toISOString()
+        result.recipients.forEach(recipientId => {
+          io.to(`user:${recipientId}`).emit('conversation.updated', {
+            conversationId,
+            lastMessage: result.message,
+            unreadCount: unreadMap.get(recipientId),
+            updatedAt: new Date().toISOString()
+          });
         });
-      });
+      }
 
       if (ack) ack({ success: true, message: result.message });
 
@@ -251,38 +255,6 @@ function registerHandlers(io, socket) {
   socket.on('leave_conversation', (payload) => {
     const { conversationId } = payload || {};
     if (conversationId) socket.leave(`conv:${conversationId}`);
-  });
-
-  socket.on('read_message', async (payload) => {
-    try {
-      const userId = socket.user.id;
-      const { conversationId, messageId } = payload || {};
-
-      if (!conversationId) return;
-
-      const result = await MessageService.markAsRead({
-        userId,
-        conversationId,
-        lastReadMessageId: messageId
-      });
-
-      if (result.marked > 0) {
-        // Notify the user (update their own badge count)
-        io.to(`user:${userId}`).emit('conversation.updated', {
-          conversationId,
-          unreadCount: result.newUnreadCount
-        });
-
-        // Notify others in the chat (show "Read by X")
-        io.to(`conv:${conversationId}`).emit('read_receipt', {
-          conversationId,
-          userId,
-          count: result.marked
-        });
-      }
-    } catch (err) {
-      console.error('read_message error', err);
-    }
   });
 }
 

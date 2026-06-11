@@ -1,5 +1,5 @@
 function validateSignalPayload(content, contentType) {
-  const allowedTypes = ['SIGNAL_ENCRYPTED', 'SIGNAL_KEY_DISTRIBUTION'];
+  const allowedTypes = ['SIGNAL_ENCRYPTED', 'SIGNAL_KEY_DISTRIBUTION', 'SIGNAL_REACTION'];
   
   if (contentType && !allowedTypes.includes(contentType)) {
     throw new Error(`Invalid contentType. Allowed: ${allowedTypes.join(', ')}`);
@@ -17,7 +17,7 @@ function validateSignalPayload(content, contentType) {
 
   // If we are sending an encrypted blob, verify structure from WASM bridge
   // The WASM bridge returns { type: number, body: Uint8Array | Array }
-  if (contentType === 'SIGNAL_ENCRYPTED' || !contentType) { 
+  if (contentType === 'SIGNAL_ENCRYPTED' || contentType === 'SIGNAL_REACTION' || !contentType) { 
     if (typeof content === 'string') {
       if (!isBase64(content)) {
         throw new Error('Security Error: Encrypted string content must be a valid Base64 string');

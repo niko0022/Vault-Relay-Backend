@@ -88,7 +88,7 @@ exports.sendMessage = async (req, res, next) => {
     const { content, contentType, attachmentUrl, replyToId } = req.body;
 
     // SIGNAL CHANGE: Detect if this is a "Control Message"
-    const isKeyDistribution = contentType === 'SIGNAL_KEY_DISTRIBUTION';
+    const isSystemMessage = contentType === 'SIGNAL_KEY_DISTRIBUTION' || contentType === 'SIGNAL_REACTION';
 
     const result = await MessageService.createMessage({
       senderId: userId,
@@ -103,7 +103,7 @@ exports.sendMessage = async (req, res, next) => {
     const io = req.app.get('io');
     if (io) {
       io.to(`conv:${convId}`).emit('message', { message: result.message });
-      if (!isKeyDistribution) {
+      if (!isSystemMessage) {
         const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
 
         result.recipients.forEach(uid => {

@@ -72,6 +72,11 @@ exports.createConversation = async (req, res, next) => {
 exports.listConversations = async (req, res, next) => {
   try {
     const userId = req.user.id;
+
+    // Fetch blocked friendships for the current user to resolve block statuses
+    const blocked = await prisma.friendship.findMany({
+      where: { status: 'BLOCKED', OR: [{ requesterId: userId }, { addresseeId: userId }] }
+    });
     const limit = Math.min(Number(req.query.limit) || 20, 50);
     const cursorParam = req.query.cursor;
     const parsedCursor = parseCursorParam(cursorParam);
@@ -146,7 +151,7 @@ exports.listConversations = async (req, res, next) => {
         },
         // Fetch only the single latest message that isn't a KEY_DISTRIBUTION
         messages: {
-          where: { contentType: { not: 'SIGNAL_KEY_DISTRIBUTION' } },
+          where: { contentType: { notIn: ['SIGNAL_KEY_DISTRIBUTION', 'SIGNAL_REACTION'] } },
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: {
@@ -173,6 +178,11 @@ exports.listConversations = async (req, res, next) => {
       const unreadCount = myParticipant ? myParticipant.unreadCount : 0;
       const lastMessage = conv.messages.length > 0 ? conv.messages[0] : null;
 
+      const otherId = conv.type === 'DIRECT' ? (conv.participantAId === userId ? conv.participantBId : conv.participantAId) : null;
+      const block = otherId ? blocked.find(f => f.requesterId === otherId || f.addresseeId === otherId) : null;
+      const isBlocked = !!block;
+      const blockedById = block?.blockedById || null;
+
       // Clean up internal arrays but keep structured data
       const { messages, ...rest } = conv;
 
@@ -180,6 +190,8 @@ exports.listConversations = async (req, res, next) => {
         ...rest,
         lastMessage,
         unreadCount,
+        isBlocked,
+        blockedById,
       };
     });
 
@@ -212,7 +224,7 @@ exports.getConversation = async (req, res, next) => {
           }
         },
         messages: {
-          where: { contentType: { not: 'SIGNAL_KEY_DISTRIBUTION' } },
+          where: { contentType: { notIn: ['SIGNAL_KEY_DISTRIBUTION', 'SIGNAL_REACTION'] } },
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: {
@@ -240,11 +252,35 @@ exports.getConversation = async (req, res, next) => {
     const lastMessage = conv.messages.length > 0 ? conv.messages[0] : null;
     const unreadCount = myParticipant.unreadCount;
 
+    let isBlocked = false;
+    let blockedById = null;
+    if (conv.type === 'DIRECT') {
+      const otherId = conv.participantAId === userId ? conv.participantBId : conv.participantAId;
+      const block = await prisma.friendship.findFirst({
+        where: {
+          status: 'BLOCKED',
+          OR: [
+            { requesterId: userId, addresseeId: otherId },
+            { requesterId: otherId, addresseeId: userId }
+          ]
+        },
+        select: { blockedById: true }
+      });
+      if (block) {
+        isBlocked = true;
+        blockedById = block.blockedById;
+      }
+    }
+
     // Clean up internal arrays but keep structured data
     const { messages, ...rest } = conv;
 
     return res.json({
-      conversation: rest,
+      conversation: {
+        ...rest,
+        isBlocked,
+        blockedById
+      },
       lastMessage,
       unreadCount,
     });

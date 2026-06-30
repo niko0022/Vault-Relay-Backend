@@ -44,6 +44,7 @@ exports.getMessages = async (req, res, next) => {
         content: true,
         contentType: true,
         senderId: true,
+        senderDeviceId: true,
         attachmentUrl: true,
         replyToId: true,
         editedAt: true,
@@ -92,6 +93,7 @@ exports.sendMessage = async (req, res, next) => {
 
     const result = await MessageService.createMessage({
       senderId: userId,
+      senderDeviceId: req.deviceId,
       conversationId: convId,
       content,
       contentType, // Pass this through!
@@ -102,7 +104,26 @@ exports.sendMessage = async (req, res, next) => {
     // Socket Emissions
     const io = req.app.get('io');
     if (io) {
-      io.to(`conv:${convId}`).emit('message', { message: result.message });
+      if (contentType === 'SIGNAL_ENCRYPTED' && result.message.content && result.message.content.startsWith('{')) {
+        try {
+          const parsedMap = JSON.parse(result.message.content);
+          if (parsedMap && typeof parsedMap === 'object' && !parsedMap.type) {
+            for (const [addressKey, ciphertext] of Object.entries(parsedMap)) {
+              const [recipientId, targetDeviceId] = addressKey.split('.');
+              io.to(`device:${recipientId}:${targetDeviceId}`).emit('message', {
+                message: { ...result.message, content: JSON.stringify(ciphertext) }
+              });
+            }
+          } else {
+            io.to(`conv:${convId}`).emit('message', { message: result.message });
+          }
+        } catch (e) {
+          io.to(`conv:${convId}`).emit('message', { message: result.message });
+        }
+      } else {
+        io.to(`conv:${convId}`).emit('message', { message: result.message });
+      }
+
       if (!isSystemMessage) {
         const unreadMap = new Map(result.updatedParticipants.map(p => [p.userId, p.unreadCount]));
 

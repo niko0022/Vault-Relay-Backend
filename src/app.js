@@ -32,6 +32,7 @@ app.use('/conversations', require('./routes/conversationsRoutes'));
 app.use('/conversations', require('./routes/messagesRoutes'));
 app.use('/friends', require('./routes/friendRoutes'));
 app.use('/keys', require('./routes/keysRoutes'));
+app.use('/devices', require('./routes/deviceRoutes'));
 
 // Global error handler
 app.use((err, req, res, next) => {

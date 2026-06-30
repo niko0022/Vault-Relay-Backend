@@ -1,7 +1,7 @@
 const prisma = require('../db/prismaClient');
 const { isBlocked } = require('./blockService');
 
-async function createMessage({ senderId, conversationId, content, contentType = 'TEXT', attachmentUrl, replyToId }) {
+async function createMessage({ senderId, senderDeviceId, conversationId, content, contentType = 'TEXT', attachmentUrl, replyToId }) {
 
     const isSystemMessage = contentType === 'SIGNAL_KEY_DISTRIBUTION' || contentType === 'SIGNAL_REACTION';
 
@@ -40,6 +40,7 @@ async function createMessage({ senderId, conversationId, content, contentType = 
         const message = await tx.message.create({
             data: {
                 senderId,
+                senderDeviceId,
                 conversationId,
                 content: content || '',
                 contentType,

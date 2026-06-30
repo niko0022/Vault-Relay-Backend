@@ -43,6 +43,11 @@ async function attachSocket(io, socket) {
   const userRoom = `user:${userId}`;
   socket.join(userRoom);
 
+  const deviceId = socket.user?.deviceId;
+  if (deviceId) {
+    socket.join(`device:${userId}:${deviceId}`);
+  }
+
   if (socketSet.size === 1) {
     try {
       await prisma.user.update({
@@ -122,6 +127,7 @@ function registerHandlers(io, socket) {
 
       const result = await MessageService.createMessage({
         senderId,
+        senderDeviceId: socket.user.deviceId,
         conversationId,
         content: contentString,
         contentType,
@@ -129,10 +135,26 @@ function registerHandlers(io, socket) {
         replyToId,
       });
 
-      // 1. Notify the conversation room (Active Chat)
-      io.to(`conv:${conversationId}`).emit('message', {
-        message: result.message
-      });
+      // 1. Notify the conversation room (Active Chat) / target devices
+      if (contentType === 'SIGNAL_ENCRYPTED' && contentString && contentString.startsWith('{')) {
+        try {
+          const parsedMap = JSON.parse(contentString);
+          if (parsedMap && typeof parsedMap === 'object' && !parsedMap.type) {
+            for (const [addressKey, ciphertext] of Object.entries(parsedMap)) {
+              const [recipientId, targetDeviceId] = addressKey.split('.');
+              io.to(`device:${recipientId}:${targetDeviceId}`).emit('message', {
+                message: { ...result.message, content: JSON.stringify(ciphertext) }
+              });
+            }
+          } else {
+            io.to(`conv:${conversationId}`).emit('message', { message: result.message });
+          }
+        } catch (e) {
+          io.to(`conv:${conversationId}`).emit('message', { message: result.message });
+        }
+      } else {
+        io.to(`conv:${conversationId}`).emit('message', { message: result.message });
+      }
 
       // 2. Notify recipients (Sidebar Preview Update) — skip for reactions
       if (contentType !== 'SIGNAL_REACTION') {
@@ -216,6 +238,24 @@ function registerHandlers(io, socket) {
 
     } catch (err) {
       socket.emit('error', { message: err.message });
+    }
+  });
+
+  socket.on('provision:send', (payload) => {
+    try {
+      const userId = socket.user.id;
+      const { targetDeviceId, ephemeralPublicKey, encryptedPayload } = payload || {};
+      if (!targetDeviceId || !ephemeralPublicKey || !encryptedPayload) {
+        return;
+      }
+      const targetRoom = `device:${userId}:${targetDeviceId}`;
+      io.to(targetRoom).emit('provision:data', {
+        senderDeviceId: socket.user.deviceId,
+        ephemeralPublicKey,
+        encryptedPayload,
+      });
+    } catch (err) {
+      console.error('provision:send error', err);
     }
   });
 

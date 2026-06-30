@@ -29,10 +29,8 @@ model User {
   receipts             MessageReceipt[]
   participants         Participant[]
   refreshTokens        RefreshToken[]
-  identityKey          IdentityKey?
-  signedPreKey         SignedPreKey?
-  oneTimePreKeys       OneTimePreKey[]
-  kyberPreKey          KyberPreKey?
+  devices              Device[]
+  recoveryCodes        DeviceRecoveryCode[]
 }
 
 model Conversation {
@@ -92,6 +90,7 @@ model Message {
   id             String             @id @default(uuid())
   conversationId String
   senderId       String
+  senderDeviceId Int?
   content        String
   contentType    MessageContentType @default(TEXT)
   replyToId      String?
@@ -114,7 +113,7 @@ model MessageReceipt {
   messageId String
   userId    String
   readAt    DateTime @default(now())
-  message   Message  @relation(fields: [messageId], references: [id])
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([messageId, userId])
@@ -141,44 +140,72 @@ model RefreshToken {
   @@index([expiresAt])
 }
 
+model Device {
+  id             String         @id @default(uuid())
+  userId         String
+  deviceId       Int            // 1, 2, 3, 4, 5
+  deviceName     String?
+  isPrimary      Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identityKey    IdentityKey?
+  signedPreKey   SignedPreKey?
+  oneTimePreKeys OneTimePreKey[]
+  kyberPreKey    KyberPreKey?
+
+  @@unique([userId, deviceId])
+}
+
 model IdentityKey {
   id             String   @id @default(uuid())
-  userId         String   @unique
+  deviceId       String   @unique
   registrationId Int      // Signal specific ID
   publicKey      String   // Base64 encoded public key
   createdAt      DateTime @default(now())
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device         Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }
 
 model SignedPreKey {
   id        String   @id @default(uuid())
-  userId    String   @unique
+  deviceId  String   @unique
   keyId     Int
   publicKey String   // Base64
   signature String   // Base64
   createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }
 
 model OneTimePreKey {
   id        String   @id @default(uuid())
-  userId    String
+  deviceId  String
   keyId     Int
   publicKey String   // Base64
   createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, keyId]) // Ensure keyIds are unique per user
+  @@unique([deviceId, keyId]) // Ensure keyIds are unique per device
 }
 
 model KyberPreKey {
   id        String   @id @default(uuid())
-  userId    String   @unique
+  deviceId  String   @unique
   keyId     Int
   publicKey String   // Base64
   signature String   // Base64
   createdAt DateTime @default(now())
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+
+model DeviceRecoveryCode {
+  id        String   @id @default(uuid())
+  userId    String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 enum ConversationType {
@@ -197,6 +224,7 @@ enum MessageContentType {
   HTML
   SIGNAL_ENCRYPTED
   SIGNAL_KEY_DISTRIBUTION
+  SIGNAL_REACTION
 }
 
 enum FriendshipStatus {

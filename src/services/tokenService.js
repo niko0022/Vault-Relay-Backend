@@ -14,10 +14,10 @@ function TokenError(message) {
   return err;
 }
 
-function signAccessToken(user) {
+function signAccessToken(user, deviceId = null) {
   const sub = user?.id ?? user;
   if (!sub) throw new Error('signAccessToken requires user id or user object with id');
-  const payload = {sub}
+  const payload = { sub, deviceId };
   const token = jwt.sign(payload, ACCESS_SECRET, { expiresIn: ACCESS_EXPIRES });
   return token;
 }
@@ -97,7 +97,7 @@ async function rotateRefreshToken({ currentToken, userAgent = null, deviceId = n
       tokenHash: newHash,
       expiresAt: newExpiresAt,
       userAgent,
-      deviceId,
+      deviceId: deviceId || tokenRecord.deviceId,
     },
   });
 
@@ -125,7 +125,7 @@ async function rotateRefreshToken({ currentToken, userAgent = null, deviceId = n
   }
 
   // issue access token
-  const accessToken = signAccessToken(tokenRecord.userId);
+  const accessToken = signAccessToken(tokenRecord.userId, tokenRecord.deviceId);
 
   return { accessToken, refreshToken: newRefreshPlain  };
 }

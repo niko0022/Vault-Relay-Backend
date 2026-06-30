@@ -23,8 +23,25 @@ function validateSignalPayload(content, contentType) {
         throw new Error('Security Error: Encrypted string content must be a valid Base64 string');
       }
     } else if (typeof content === 'object' && content !== null) {
-      if (typeof content.type !== 'number' || !content.body) {
-        throw new Error('Security Error: Encrypted object content must have {type: number, body: [...]} structure');
+      if (contentType === 'SIGNAL_ENCRYPTED' && !('type' in content)) {
+        // This is a fanned-out map of userId.deviceId -> ciphertext
+        for (const [addressKey, encBlob] of Object.entries(content)) {
+          if (typeof encBlob === 'string') {
+            if (!isBase64(encBlob)) {
+              throw new Error(`Security Error: Encrypted content for device ${addressKey} must be a valid Base64 string`);
+            }
+          } else if (typeof encBlob === 'object' && encBlob !== null) {
+            if (typeof encBlob.type !== 'number' || !encBlob.body) {
+              throw new Error(`Security Error: Encrypted content for device ${addressKey} must have {type: number, body: [...]} structure`);
+            }
+          } else {
+            throw new Error(`Security Error: Unrecognized encrypted content format for device ${addressKey}`);
+          }
+        }
+      } else {
+        if (typeof content.type !== 'number' || !content.body) {
+          throw new Error('Security Error: Encrypted object content must have {type: number, body: [...]} structure');
+        }
       }
     } else {
       throw new Error('Security Error: Encrypted content format unrecognized');

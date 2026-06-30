@@ -42,8 +42,8 @@ function initializePassport() {
   passport.use(new JwtStrategy({
     jwtFromRequest: extractFromCookie,
     secretOrKey: ACCESS_SECRET,
-    passReqToCallback: false,
-  }, async (payload, done) => {
+    passReqToCallback: true,
+  }, async (req, payload, done) => {
     try {
       const userId = payload && payload.sub;
       if (!userId) return done(null, false);
@@ -51,6 +51,7 @@ function initializePassport() {
       if (!user) return done(null, false);
       const safeUser = { ...user };
       delete safeUser.passwordHash;
+      req.deviceId = payload.deviceId ? parseInt(payload.deviceId) : null;
       return done(null, safeUser);
     } catch (err) {
       return done(err);
